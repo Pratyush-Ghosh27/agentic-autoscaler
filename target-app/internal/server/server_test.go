@@ -97,7 +97,7 @@ func TestWork_HappyPathReturns200(t *testing.T) {
 }
 
 func TestWork_HistogramObservedAfterRequest(t *testing.T) {
-	cfg := server.Config{Concurrency: 1, WorkDurationMS: 10, WorkJitterMS: 0}
+	cfg := server.Config{Concurrency: 1, WorkDurationMS: 10, WorkJitterMS: 0, DeploymentName: "app-test"}
 	srv := server.New(cfg)
 
 	rec := httptest.NewRecorder()
@@ -109,11 +109,11 @@ func TestWork_HistogramObservedAfterRequest(t *testing.T) {
 	srv.Handler().ServeHTTP(mrec, mreq)
 
 	body := mrec.Body.String()
-	assert.Contains(t, body, `target_app_request_duration_seconds_count{path="/work"} 1`)
+	assert.Contains(t, body, `target_app_request_duration_seconds_count{deployment="app-test",path="/work"} 1`)
 }
 
 func TestWork_CounterIncrementedWithStatus200(t *testing.T) {
-	cfg := server.Config{Concurrency: 1, WorkDurationMS: 5, WorkJitterMS: 0}
+	cfg := server.Config{Concurrency: 1, WorkDurationMS: 5, WorkJitterMS: 0, DeploymentName: "app-test"}
 	srv := server.New(cfg)
 
 	rec := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestWork_CounterIncrementedWithStatus200(t *testing.T) {
 	srv.Handler().ServeHTTP(mrec, mreq)
 
 	body := mrec.Body.String()
-	assert.Contains(t, body, `target_app_requests_total{path="/work",status="200"} 1`)
+	assert.Contains(t, body, `target_app_requests_total{deployment="app-test",path="/work",status="200"} 1`)
 }
 
 func TestWork_BurstAboveSemaphoreLimit_Returns503(t *testing.T) {
@@ -160,7 +160,7 @@ func TestWork_BurstAboveSemaphoreLimit_Returns503(t *testing.T) {
 }
 
 func TestWork_503CounterLabeledCorrectly(t *testing.T) {
-	cfg := server.Config{Concurrency: 0, WorkDurationMS: 5, WorkJitterMS: 0}
+	cfg := server.Config{Concurrency: 0, WorkDurationMS: 5, WorkJitterMS: 0, DeploymentName: "app-test"}
 	srv := server.New(cfg)
 	handler := srv.Handler()
 
@@ -175,5 +175,28 @@ func TestWork_503CounterLabeledCorrectly(t *testing.T) {
 	handler.ServeHTTP(mrec, mreq)
 
 	body := mrec.Body.String()
-	assert.Contains(t, body, `target_app_requests_total{path="/work",status="503"} 1`)
+	assert.Contains(t, body, `target_app_requests_total{deployment="app-test",path="/work",status="503"} 1`)
+}
+
+func TestMetrics_DefaultConfigEmitsDeploymentLabelEqualUnknown(t *testing.T) {
+	srv := server.New(server.DefaultConfig())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	// Pre-instantiated label rows must carry the const label.
+	assert.Contains(t, body, `target_app_requests_total{deployment="unknown",path="/work",status="200"} 0`)
+	assert.Contains(t, body, `target_app_requests_total{deployment="unknown",path="/work",status="503"} 0`)
+}
+
+func TestMetrics_EmptyDeploymentNameFallsBackToUnknown(t *testing.T) {
+	cfg := server.Config{Concurrency: 1, WorkDurationMS: 1, DeploymentName: ""}
+	srv := server.New(cfg)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, `deployment="unknown"`)
 }

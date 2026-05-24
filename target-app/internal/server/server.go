@@ -19,6 +19,12 @@ type Config struct {
 	Concurrency    int
 	WorkDurationMS int
 	WorkJitterMS   int
+	// DeploymentName is exposed as a `deployment` const-label on every
+	// metric this server emits. Without it, Prometheus queries that join
+	// across the agentic vs HPA targets (e.g. test/e2e/assertions.sh,
+	// the Grafana dashboard) match nothing — see docs/gap-report-v1.md G3.
+	// Populated from the DEPLOYMENT_NAME env var (downward API).
+	DeploymentName string
 }
 
 // DefaultConfig returns sensible defaults.
@@ -27,6 +33,7 @@ func DefaultConfig() Config {
 		Concurrency:    8,
 		WorkDurationMS: 50,
 		WorkJitterMS:   30,
+		DeploymentName: "unknown",
 	}
 }
 
@@ -44,10 +51,21 @@ type Server struct {
 func New(cfg Config) *Server {
 	reg := prometheus.NewRegistry()
 
+	// `deployment` is a ConstLabel rather than a per-observation label
+	// because every observation in a single process has the same value
+	// (the pod's owning Deployment). This keeps cardinality predictable
+	// while still giving Prometheus a label to filter on.
+	deploymentName := cfg.DeploymentName
+	if deploymentName == "" {
+		deploymentName = "unknown"
+	}
+	constLabels := prometheus.Labels{"deployment": deploymentName}
+
 	histogram := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "target_app_request_duration_seconds",
-			Help: "End-to-end request duration in seconds.",
+			Name:        "target_app_request_duration_seconds",
+			Help:        "End-to-end request duration in seconds.",
+			ConstLabels: constLabels,
 			Buckets: []float64{
 				0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1,
 				0.25, 0.5, 1, 2.5, 5, 10,
@@ -58,8 +76,9 @@ func New(cfg Config) *Server {
 
 	counter := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "target_app_requests_total",
-			Help: "Total number of requests, labeled by status.",
+			Name:        "target_app_requests_total",
+			Help:        "Total number of requests, labeled by status.",
+			ConstLabels: constLabels,
 		},
 		[]string{"path", "status"},
 	)

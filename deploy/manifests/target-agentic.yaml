@@ -40,6 +40,14 @@ spec:
               value: "100"
             - name: TARGET_WORK_JITTER_MS
               value: "30"
+            # DEPLOYMENT_NAME becomes the `deployment` const-label on all
+            # target_app_* metrics. Without it, every PromQL query that
+            # filters by {deployment="..."} (assertions.sh, Grafana
+            # dashboard, HPA metrics) matches nothing.
+            - name: DEPLOYMENT_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app']
           resources:
             requests:
               cpu: 100m

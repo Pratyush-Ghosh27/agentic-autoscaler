@@ -95,6 +95,39 @@ type CrossVersionObjectReference struct {
 	Name string `json:"name"`
 }
 
+// ClassifiedParams holds the classifier's recommended scaling parameters.
+// Written exclusively by the ClassifierWorker; reconciler reads but never writes.
+// See docs/design.md §6.1 and §7.
+type ClassifiedParams struct {
+	// Pattern is one of: flat, periodic, spiky, gradual_ramp, default.
+	// +kubebuilder:validation:Enum=flat;periodic;spiky;gradual_ramp;default
+	Pattern string `json:"pattern"`
+
+	// ScaleUpCooldownSeconds is the classifier's recommended scale-up cooldown.
+	ScaleUpCooldownSeconds int32 `json:"scaleUpCooldownSeconds"`
+
+	// ScaleDownCooldownSeconds is the classifier's recommended scale-down cooldown.
+	ScaleDownCooldownSeconds int32 `json:"scaleDownCooldownSeconds"`
+
+	// MaxStepSize is the classifier's recommended maximum replica delta per reconcile.
+	MaxStepSize int32 `json:"maxStepSize"`
+
+	// PreferredForecaster is "prophet" or "linear_extrap".
+	// +kubebuilder:validation:Enum=prophet;linear_extrap
+	PreferredForecaster string `json:"preferredForecaster"`
+
+	// ClassifiedAt is the timestamp of the most recent classification.
+	ClassifiedAt metav1.Time `json:"classifiedAt"`
+
+	// HistoryPoints is the count of Prometheus data points used.
+	HistoryPoints int32 `json:"historyPoints"`
+
+	// Confidence is "high" if HistoryPoints >= CLASSIFIER_HIGH_CONFIDENCE_POINTS,
+	// otherwise "medium". See docs/design.md §4.
+	// +kubebuilder:validation:Enum=high;medium
+	Confidence string `json:"confidence"`
+}
+
 // AgenticAutoscalerStatus defines the observed state of AgenticAutoscaler.
 type AgenticAutoscalerStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster

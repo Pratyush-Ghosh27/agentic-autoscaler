@@ -1,0 +1,33 @@
+---
+# PodMonitor that tells Prometheus to scrape /metrics on every app-agentic
+# and app-hpa pod in the demo namespace.
+#
+# Without this, kube-prometheus-stack ignores the prometheus.io/scrape
+# annotations on the pods (kube-prom only consumes the PodMonitor /
+# ServiceMonitor CRDs, not annotation-based discovery). The result is
+# every reconcile sees zero RPS, emits `metrics_unavailable`, and makes
+# no scaling decisions — exactly what the first nightly run silently
+# demonstrated.
+#
+# See docs/gap-report-v1.md G9.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: target-app
+  namespace: demo
+  labels:
+    app: target-app
+spec:
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - app-agentic
+          - app-hpa
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      # 15 s matches the default kube-prom scrape interval and is fine for
+      # a 1-min sliding window on the controller's hot path.
+      interval: 15s

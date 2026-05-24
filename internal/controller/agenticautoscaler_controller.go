@@ -29,6 +29,7 @@ import (
 
 	autoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/api/v1alpha1"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/forecast"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/classifier"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/promql"
@@ -56,6 +57,11 @@ type AgenticAutoscalerReconciler struct {
 	Forecaster    Forecaster
 	ExplainNotify ExplainNotifier
 	StateStore    *decision.StateStore
+	// Classifier owns the ClassifierWorker goroutine for each CR. May be
+	// nil in unit tests that exercise pure reconcile behaviour without
+	// the cold-path; production wiring (cmd/controller/main.go) always
+	// supplies a real manager.
+	Classifier *classifier.Manager
 	// Now is injected for testability. Defaults to time.Now via nowFunc().
 	Now func() time.Time
 }
@@ -89,8 +95,21 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err := r.Get(ctx, req.NamespacedName, &aas); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			r.StateStore.Delete(req.NamespacedName)
+			if r.Classifier != nil {
+				r.Classifier.Stop(req.NamespacedName)
+			}
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Cold-path lifecycle: ensure a ClassifierWorker is running for this
+	// CR (idempotent; no-op once the worker is started). The worker's
+	// own immediate-first-run trigger handles initial classification.
+	if r.Classifier != nil {
+		r.Classifier.Ensure(&aas)
+		if aas.Annotations[reasoning.AnnotationReclassify] == "true" {
+			r.Classifier.SignalReclassify(req.NamespacedName)
+		}
 	}
 
 	// Pre-check 1a: kill-switch.
@@ -116,6 +135,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		log.Error(err, "prometheus instant query failed")
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, err.Error())
+		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 
@@ -125,11 +145,13 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		log.Error(err, "prometheus range query failed")
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, err.Error())
+		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 	if len(samples) < int(r.Config.HotPathMinPoints) {
 		msg := fmt.Sprintf("only %d range samples (need %d)", len(samples), r.Config.HotPathMinPoints)
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, msg)
+		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 	rpsHistory := make([]float64, len(samples))
@@ -151,6 +173,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		log.Error(err, "forecast service call failed")
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.ForecastUnavailable, err.Error())
+		observeForecastFailure(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 
@@ -159,6 +182,12 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err := r.Get(ctx, types.NamespacedName{Namespace: aas.Namespace, Name: deployName}, &deploy); err != nil {
 		log.Error(err, "failed to get target Deployment")
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
+	}
+	// Generation-change detection (design §6.1 trigger 4). The classifier
+	// manager dedups against the last seen value, so this call is
+	// safe to make on every reconcile. Skipped when Classifier is nil.
+	if r.Classifier != nil {
+		r.Classifier.ObserveDeploymentGeneration(req.NamespacedName, deploy.Generation)
 	}
 	currentReplicas := int32(1)
 	if deploy.Spec.Replicas != nil {
@@ -221,6 +250,14 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
 		"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
 		currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+
+	// Record per-reconcile gauges + scale-events counter. Done after
+	// the decision, before status update, so a status-update failure
+	// doesn't double-count.
+	observeReconcile(aas.Namespace, aas.Name, capOut.Reason,
+		currentRPS, forecastResp.PredictedRPS, rpsPerPod)
+	observeClassification(aas.Namespace, aas.Name,
+		classifiedPattern(&aas), classifiedConfidence(&aas))
 
 	if capOut.ShouldPatch {
 		r.ExplainNotify.Notify(ExplainRequest{

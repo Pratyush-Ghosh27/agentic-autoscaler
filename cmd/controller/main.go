@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -40,6 +41,7 @@ import (
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/forecast"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/ollama"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/prometheus"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/classifier"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/controller"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
@@ -172,6 +174,26 @@ func main() {
 	forecastClient := forecast.New(cfg.ForecastServiceURL, cfg.ForecastTimeout)
 	explainCh := make(chan controller.ExplainRequest, 1)
 
+	// Cold-path lifecycle: one ClassifierWorker per active AAS CR,
+	// supervised by a Manager. The reconciler calls Ensure / Stop /
+	// SignalReclassify / ObserveDeploymentGeneration as part of the
+	// normal reconcile flow, so the worker is invisible to call sites
+	// that only care about hot-path scaling. See docs/design.md §6.1.
+	signalCtx := ctrl.SetupSignalHandler()
+	classifierManager := classifier.NewManager(
+		signalCtx,
+		mgr.GetClient(),
+		promClient,
+		mgr.GetEventRecorderFor("agenticautoscaler-classifier"),
+		classifier.WorkerConfig{
+			Interval:       cfg.ClassifierInterval,
+			HistoryHours:   cfg.ClassifierHistory,
+			MinPoints:      int(cfg.ClassifierMinPoints),
+			HighConfPoints: int(cfg.ClassifierHighConfidencePoints),
+			DedupSeconds:   int(cfg.ClassifierDedup / time.Second),
+		},
+	)
+
 	reconciler := &controller.AgenticAutoscalerReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
@@ -181,6 +203,7 @@ func main() {
 		Forecaster:    forecastClient,
 		ExplainNotify: controller.ChannelNotifier{Ch: explainCh},
 		StateStore:    decision.NewStateStore(),
+		Classifier:    classifierManager,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AgenticAutoscaler")
@@ -212,7 +235,6 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	signalCtx := ctrl.SetupSignalHandler()
 	go explainWorker.Run(signalCtx, explainCh)
 	if err := mgr.Start(signalCtx); err != nil {
 		setupLog.Error(err, "problem running manager")

@@ -35,7 +35,10 @@ Both invocations run `test/e2e/run.sh`, which:
 4. `make deploy`.
 5. Waits for steady state and sleeps `WARMUP_SECONDS=300` so the
    classifier completes its first run.
-6. Runs `k6/scenarios/ramp.js` for `RAMP_DURATION=25m`.
+6. Runs `k6/scenarios/ramp.js` for the configured profile (defaults to a
+   25 m total: 5 m ramp-up + 15 m hold + 5 m ramp-down). Override per-run
+   via the `ramp_up_duration`, `ramp_hold_duration`, and
+   `ramp_down_duration` workflow inputs.
 7. Calls `test/e2e/assertions.sh` to query Prometheus and compare both
    targets.
 8. Deletes the cluster (skip with `KEEP_CLUSTER=1` to inspect).
@@ -47,8 +50,8 @@ Both invocations run `test/e2e/run.sh`, which:
 
 | Signal       | PromQL                                                                                   |
 | ------------ | ---------------------------------------------------------------------------------------- |
-| p99 latency  | `histogram_quantile(0.99, sum by (le) (rate(target_app_request_duration_seconds_bucket[25m])))` |
-| 5xx rate    | `sum(rate(target_app_requests_total{status=~"5.."}[25m]))`                              |
+| p99 latency  | `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[25m])))` |
+| 5xx rate    | `sum(rate(http_requests_total{status=~"5.."}[25m]))`                              |
 
 Both filters narrow on `deployment="app-agentic"` vs `deployment="app-hpa"`,
 which the metrics adapter populates from the pod's owning Deployment.

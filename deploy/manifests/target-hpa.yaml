@@ -40,6 +40,13 @@ spec:
               value: "100"
             - name: TARGET_WORK_JITTER_MS
               value: "30"
+            # See target-agentic.yaml for the rationale; both manifests must
+            # carry this env var so the deployment label is populated for
+            # both halves of the agentic-vs-HPA comparison.
+            - name: DEPLOYMENT_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app']
           resources:
             requests:
               cpu: 100m

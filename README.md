@@ -40,7 +40,7 @@ Three workers run inside the controller process:
 | ExplainWorker     | drop-and-replace   | LLM-explanations of replica changes (best-effort)   |
 
 Plus the in-cluster pieces: a target-app (Go) emitting
-`target_app_requests_total` / `_request_duration_seconds_bucket`; the
+`http_requests_total` / `_request_duration_seconds_bucket`; the
 Forecast Service (Python/FastAPI) running Prophet or linear extrapolation;
 a 7-panel Grafana dashboard for the agentic-vs-HPA comparison.
 

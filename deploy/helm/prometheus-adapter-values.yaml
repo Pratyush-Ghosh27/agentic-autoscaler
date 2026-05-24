@@ -1,0 +1,45 @@
+---
+# prometheus-adapter values: expose `http_requests_per_second` as a Pods
+# custom metric so the standard HPA in deploy/manifests/hpa.yaml can
+# actually scale `app-hpa`.
+#
+# Without this, the HPA reports `FailedGetResourceMetric` and stays at
+# minReplicas regardless of load — turning the agentic-vs-HPA comparison
+# into a rigged win for the agentic side. See docs/gap-report-v1.md G4.
+
+prometheus:
+  # In-cluster Prometheus served by kube-prometheus-stack. The chart
+  # creates a ClusterIP service named `kube-prom-kube-prometheus-prometheus`
+  # in the `monitoring` namespace.
+  url: http://kube-prom-kube-prometheus-prometheus.monitoring.svc
+  port: 9090
+
+# Disable the default rules; we provide our own focused rule for
+# http_requests_per_second only. Keeping the rule list tight makes
+# debugging "why does my HPA see no metric?" much easier.
+rules:
+  default: false
+  custom:
+    # Build `http_requests_per_second` (Pods custom metric) from the rate
+    # of successful HTTP requests over a 1-minute window. Status filter
+    # excludes 5xx so an overload-503 burst doesn't trick the HPA into
+    # scaling *up* on the very signal that means the pod is at capacity.
+    - seriesQuery: 'http_requests_total{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: { resource: "namespace" }
+          pod:       { resource: "pod" }
+      name:
+        matches: "^http_requests_total$"
+        as: "http_requests_per_second"
+      metricsQuery: |
+        sum(rate(http_requests_total{<<.LabelMatchers>>,status=~"2.."}[1m])) by (<<.GroupBy>>)
+
+# Keep resources small for kind / CI; bump in production.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi

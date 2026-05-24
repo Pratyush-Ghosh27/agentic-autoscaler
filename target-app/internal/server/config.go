@@ -12,6 +12,9 @@ func LoadConfig() Config {
 	cfg.Concurrency = envIntOrDefault("TARGET_CONCURRENCY", cfg.Concurrency)
 	cfg.WorkDurationMS = envIntOrDefault("TARGET_WORK_DURATION_MS", cfg.WorkDurationMS)
 	cfg.WorkJitterMS = envIntOrDefault("TARGET_WORK_JITTER_MS", cfg.WorkJitterMS)
+	if v := os.Getenv("DEPLOYMENT_NAME"); v != "" {
+		cfg.DeploymentName = v
+	}
 	return cfg
 }
 

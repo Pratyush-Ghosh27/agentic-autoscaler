@@ -186,7 +186,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.99, sum(rate(target_app_request_duration_seconds_bucket{deployment=~\"app-agentic|app-hpa\"}[2m])) by (le, deployment))",
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{deployment=~\"app-agentic|app-hpa\"}[2m])) by (le, deployment))",
           "legendFormat": "{{deployment}}"
         }
       ],
@@ -229,8 +229,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(target_app_requests_total{deployment=~\"app-agentic|app-hpa\", outcome=\"overload\"}[2m])) by (deployment)",
-          "legendFormat": "{{deployment}} overload"
+          "expr": "sum(rate(http_requests_total{deployment=~\"app-agentic|app-hpa\", status=~\"5..\"}[2m])) by (deployment)",
+          "legendFormat": "{{deployment}} 5xx"
         }
       ],
       "options": {

@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -124,4 +126,54 @@ func TestWork_CounterIncrementedWithStatus200(t *testing.T) {
 
 	body := mrec.Body.String()
 	assert.Contains(t, body, `target_app_requests_total{path="/work",status="200"} 1`)
+}
+
+func TestWork_BurstAboveSemaphoreLimit_Returns503(t *testing.T) {
+	const concurrency = 2
+	const burst = 20
+	cfg := server.Config{Concurrency: concurrency, WorkDurationMS: 100, WorkJitterMS: 0}
+	srv := server.New(cfg)
+	handler := srv.Handler()
+
+	var oks, rejects int32
+	var wg sync.WaitGroup
+	wg.Add(burst)
+	for i := 0; i < burst; i++ {
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/work", nil)
+			handler.ServeHTTP(rec, req)
+			switch rec.Code {
+			case http.StatusOK:
+				atomic.AddInt32(&oks, 1)
+			case http.StatusServiceUnavailable:
+				atomic.AddInt32(&rejects, 1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	assert.GreaterOrEqual(t, int(oks), 1, "at least one request should succeed")
+	assert.GreaterOrEqual(t, int(rejects), burst-concurrency*2, "most concurrent requests should reject")
+	assert.Equal(t, burst, int(oks)+int(rejects), "every request should resolve to 200 or 503")
+}
+
+func TestWork_503CounterLabeledCorrectly(t *testing.T) {
+	cfg := server.Config{Concurrency: 0, WorkDurationMS: 5, WorkJitterMS: 0}
+	srv := server.New(cfg)
+	handler := srv.Handler()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/work", nil)
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+	mrec := httptest.NewRecorder()
+	mreq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	handler.ServeHTTP(mrec, mreq)
+
+	body := mrec.Body.String()
+	assert.Contains(t, body, `target_app_requests_total{path="/work",status="503"} 1`)
 }

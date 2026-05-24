@@ -20,16 +20,44 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // AgenticAutoscalerSpec defines the desired state of AgenticAutoscaler.
+//
+// All fields except TargetRef are optional. Optional scaling-behaviour fields
+// (MaxStepSize, ScaleUpCooldownSeconds, ScaleDownCooldownSeconds,
+// PreferredForecaster) default to nil meaning "defer to the classifier";
+// see docs/design.md §8 for the full precedence chain.
 type AgenticAutoscalerSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// TargetRef points at the Deployment to autoscale.
+	// +kubebuilder:validation:Required
+	TargetRef CrossVersionObjectReference `json:"targetRef"`
 
-	// Foo is an example field of AgenticAutoscaler. Edit agenticautoscaler_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// MinReplicas is the lower bound on replica count.
+	// +kubebuilder:default=2
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// MaxReplicas is the upper bound on replica count.
+	// +kubebuilder:default=10
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+}
+
+// CrossVersionObjectReference identifies a target Deployment.
+type CrossVersionObjectReference struct {
+	// APIVersion of the target (e.g. "apps/v1").
+	// +kubebuilder:validation:Required
+	APIVersion string `json:"apiVersion"`
+
+	// Kind of the target. Only "Deployment" is supported in this version.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Deployment
+	Kind string `json:"kind"`
+
+	// Name of the target.
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
 }
 
 // AgenticAutoscalerStatus defines the observed state of AgenticAutoscaler.

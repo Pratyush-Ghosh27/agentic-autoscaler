@@ -573,7 +573,11 @@ var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
 		got.Status.RpsPerPodCurrent = 275
 		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
 
-		// Forecast wants 4 replicas (1100 / 275 ≈ 4).
+		// On the first reconcile the rps_per_pod ring buffer hasn't been
+		// seeded yet, so the steady-state gate fires and pushes its first
+		// observation = currentRPS / currentReplicas = 500 / 2 = 250.
+		// recommended = ceil(predictedRPS / rps_per_pod) = ceil(1100 / 250) = 5.
+		// Step cap MaxStep=4 doesn't bind (|5-2|=3 ≤ 4), so target=5.
 		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
 		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1100, ModelUsed: "linear_extrap"}}
 		ex := &fakeExplainNotifier{}
@@ -583,7 +587,7 @@ var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
 		_, err := reconcileFor(ctx, r, ns, cr)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(4)),
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(5)),
 			"old LastScaleTime must not falsely gate fresh scale-up decisions")
 		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("scale_up")))
 	})

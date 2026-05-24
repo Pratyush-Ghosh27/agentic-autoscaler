@@ -174,3 +174,51 @@ func (c Config) validate() []string {
 
 	return errs
 }
+
+// Summary returns a multi-line, deterministic key=value rendering of the
+// resolved config, suitable for one-shot logging at manager startup.
+// Values are not redacted — the controller's config is not secret.
+func (c Config) Summary() string {
+	return fmt.Sprintf(
+		"FORECAST_SERVICE_URL=%s\n"+
+			"PROMETHEUS_URL=%s\n"+
+			"RECONCILE_INTERVAL_SECONDS=%d\n"+
+			"HOT_PATH_HISTORY_MINUTES=%d\n"+
+			"HOT_PATH_MIN_POINTS=%d\n"+
+			"FORECAST_HORIZON_MINUTES=%d\n"+
+			"FORECAST_TIMEOUT_SECONDS=%d\n"+
+			"PROPHET_MIN_POINTS=%d\n"+
+			"CLASSIFIER_INTERVAL_MINUTES=%d\n"+
+			"CLASSIFIER_HISTORY_HOURS=%d\n"+
+			"CLASSIFIER_MIN_POINTS=%d\n"+
+			"CLASSIFIER_HIGH_CONFIDENCE_POINTS=%d\n"+
+			"CLASSIFIER_DEDUP_SECONDS=%d\n"+
+			"DEFAULT_SCALE_UP_COOLDOWN_SECONDS=%d\n"+
+			"DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS=%d\n"+
+			"DEFAULT_MAX_STEP_SIZE=%d\n"+
+			"OLLAMA_URL=%s\n"+
+			"OLLAMA_MODEL=%s\n"+
+			"OLLAMA_TIMEOUT_SECONDS=%d\n"+
+			"OLLAMA_MAX_TOKENS=%d",
+		c.ForecastServiceURL,
+		c.PrometheusURL,
+		int(c.ReconcileInterval/time.Second),
+		int(c.HotPathHistory/time.Minute),
+		c.HotPathMinPoints,
+		int(c.ForecastHorizon/time.Minute),
+		int(c.ForecastTimeout/time.Second),
+		c.ProphetMinPoints,
+		int(c.ClassifierInterval/time.Minute),
+		int(c.ClassifierHistory/time.Hour),
+		c.ClassifierMinPoints,
+		c.ClassifierHighConfidencePoints,
+		int(c.ClassifierDedup/time.Second),
+		int(c.DefaultScaleUpCooldown/time.Second),
+		int(c.DefaultScaleDownCooldown/time.Second),
+		c.DefaultMaxStepSize,
+		c.OllamaURL,
+		c.OllamaModel,
+		int(c.OllamaTimeout/time.Second),
+		c.OllamaMaxTokens,
+	)
+}

@@ -198,3 +198,17 @@ func TestLoadFromEnv_AcceptsAllValidOverrides(t *testing.T) {
 	assert.Equal(t, time.Duration(0), cfg.DefaultScaleUpCooldown)
 	assert.Equal(t, int32(1), cfg.DefaultMaxStepSize)
 }
+
+func TestConfigSummary_StableShape(t *testing.T) {
+	withRequiredEnv(t)
+	cfg, err := LoadFromEnv()
+	require.NoError(t, err)
+
+	summary := cfg.Summary()
+
+	assert.Contains(t, summary, "FORECAST_SERVICE_URL")
+	assert.Contains(t, summary, "PROMETHEUS_URL")
+	assert.Contains(t, summary, "RECONCILE_INTERVAL_SECONDS=60")
+	assert.Contains(t, summary, "CLASSIFIER_MIN_POINTS=70")
+	assert.Contains(t, summary, "OLLAMA_MODEL=llama3.2")
+}

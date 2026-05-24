@@ -81,3 +81,47 @@ func TestMetrics_HistogramBucketsCover1msTo10s(t *testing.T) {
 	assert.Contains(t, body, `le="0.001"`)
 	assert.Contains(t, body, `le="10"`)
 }
+
+func TestWork_HappyPathReturns200(t *testing.T) {
+	cfg := server.Config{Concurrency: 1, WorkDurationMS: 10, WorkJitterMS: 0}
+	srv := server.New(cfg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/work", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"work":"done"`)
+}
+
+func TestWork_HistogramObservedAfterRequest(t *testing.T) {
+	cfg := server.Config{Concurrency: 1, WorkDurationMS: 10, WorkJitterMS: 0}
+	srv := server.New(cfg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/work", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	mrec := httptest.NewRecorder()
+	mreq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler().ServeHTTP(mrec, mreq)
+
+	body := mrec.Body.String()
+	assert.Contains(t, body, `target_app_request_duration_seconds_count{path="/work"} 1`)
+}
+
+func TestWork_CounterIncrementedWithStatus200(t *testing.T) {
+	cfg := server.Config{Concurrency: 1, WorkDurationMS: 5, WorkJitterMS: 0}
+	srv := server.New(cfg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/work", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	mrec := httptest.NewRecorder()
+	mreq := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler().ServeHTTP(mrec, mreq)
+
+	body := mrec.Body.String()
+	assert.Contains(t, body, `target_app_requests_total{path="/work",status="200"} 1`)
+}

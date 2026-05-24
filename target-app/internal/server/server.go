@@ -3,8 +3,12 @@
 package server
 
 import (
+	"fmt"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -33,6 +37,7 @@ type Server struct {
 	registry  *prometheus.Registry
 	histogram *prometheus.HistogramVec
 	counter   *prometheus.CounterVec
+	sem       chan struct{}
 }
 
 // New constructs a Server with the given config.
@@ -73,6 +78,7 @@ func New(cfg Config) *Server {
 		registry:  reg,
 		histogram: histogram,
 		counter:   counter,
+		sem:       make(chan struct{}, cfg.Concurrency),
 	}
 	s.ready.Store(true)
 	return s
@@ -89,8 +95,37 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+	mux.HandleFunc("/work", s.handleWork)
 	mux.Handle("/metrics", promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{Registry: s.registry}))
 	return mux
+}
+
+func (s *Server) handleWork(w http.ResponseWriter, _ *http.Request) {
+	start := time.Now()
+	defer func() {
+		s.histogram.WithLabelValues("/work").Observe(time.Since(start).Seconds())
+	}()
+
+	select {
+	case s.sem <- struct{}{}:
+		defer func() { <-s.sem }()
+	default:
+		s.counter.WithLabelValues("/work", strconv.Itoa(http.StatusServiceUnavailable)).Inc()
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"work":"rejected","reason":"overloaded"}`)
+		return
+	}
+
+	dur := time.Duration(s.cfg.WorkDurationMS) * time.Millisecond
+	if s.cfg.WorkJitterMS > 0 {
+		jitter := rand.IntN(s.cfg.WorkJitterMS)
+		dur += time.Duration(jitter) * time.Millisecond
+	}
+	time.Sleep(dur)
+
+	s.counter.WithLabelValues("/work", strconv.Itoa(http.StatusOK)).Inc()
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprint(w, `{"work":"done"}`)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {

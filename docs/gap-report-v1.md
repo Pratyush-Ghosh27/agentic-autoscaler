@@ -10,6 +10,15 @@ The PR CI is green and the nightly E2E ran end-to-end with `success` once. This
 report documents what *actually* works versus what the design promises, so v2
 planning starts from reality, not from "all green ⇒ all done".
 
+> **Status as of 2026-05-24** (branch `fix/gaps-v1.1`):
+> - ✅ G1, G2, G3, G4, G5, G7 — fixed.
+> - ✅ G8 (NEW) — target-app metric names didn't match the controller's
+>   PromQL (`target_app_*` vs `http_*`); fixed in same PR.
+> - ✅ G9 (NEW) — kube-prometheus-stack only consumes PodMonitor/ServiceMonitor
+>   CRDs, ignoring the `prometheus.io/scrape` annotations the target-app
+>   was relying on. PodMonitor added in same PR.
+> - ⏳ G6 — left for after a few nightly runs with real data.
+
 > **Bottom line.** The hot path (forecast-driven reconcile + webhook + status)
 > is real and exercised. The cold path (pattern classification) is dead code
 > in the deployed binary. The quantitative comparison vs HPA in the nightly

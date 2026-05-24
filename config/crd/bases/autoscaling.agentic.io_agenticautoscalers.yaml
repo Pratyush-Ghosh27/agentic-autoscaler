@@ -11,10 +11,29 @@ spec:
     kind: AgenticAutoscaler
     listKind: AgenticAutoscalerList
     plural: agenticautoscalers
+    shortNames:
+    - aas
+    - agentic
     singular: agenticautoscaler
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.currentReplicas
+      name: Current
+      type: integer
+    - jsonPath: .status.recommendedReplicas
+      name: Recommended
+      type: integer
+    - jsonPath: .status.classifiedParams.pattern
+      name: Pattern
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: AgenticAutoscaler is the Schema for the agenticautoscalers API.
@@ -37,15 +56,193 @@ spec:
           metadata:
             type: object
           spec:
-            description: AgenticAutoscalerSpec defines the desired state of AgenticAutoscaler.
+            description: |-
+              AgenticAutoscalerSpec defines the desired state of AgenticAutoscaler.
+
+              All fields except TargetRef are optional. Optional scaling-behaviour fields
+              (MaxStepSize, ScaleUpCooldownSeconds, ScaleDownCooldownSeconds,
+              PreferredForecaster) default to nil meaning "defer to the classifier";
+              see docs/design.md §8 for the full precedence chain.
             properties:
-              foo:
-                description: Foo is an example field of AgenticAutoscaler. Edit agenticautoscaler_types.go
-                  to remove/update
+              maxReplicas:
+                default: 10
+                description: MaxReplicas is the upper bound on replica count.
+                format: int32
+                minimum: 1
+                type: integer
+              maxStepSize:
+                description: |-
+                  MaxStepSize caps replicas moved per reconcile. nil means "defer to
+                  classifier". Operator override per docs/design.md §8.
+                format: int32
+                minimum: 1
+                type: integer
+              minReplicas:
+                default: 2
+                description: MinReplicas is the lower bound on replica count.
+                format: int32
+                minimum: 1
+                type: integer
+              preferredForecaster:
+                description: PreferredForecaster. nil or "auto" means "defer to classifier".
+                enum:
+                - prophet
+                - linear_extrap
+                - auto
                 type: string
+              rpsPerPodMax:
+                default: 500
+                description: |-
+                  RpsPerPodMax is the safety ceiling for the self-calibrating
+                  rps_per_pod estimate.
+                format: int32
+                minimum: 1
+                type: integer
+              rpsPerPodMin:
+                default: 50
+                description: |-
+                  RpsPerPodMin is the safety floor for the self-calibrating
+                  rps_per_pod estimate. See docs/design.md §5 step 5.
+                format: int32
+                minimum: 1
+                type: integer
+              scaleDownCooldownSeconds:
+                description: ScaleDownCooldownSeconds. nil means "defer to classifier".
+                format: int32
+                minimum: 0
+                type: integer
+              scaleUpCooldownSeconds:
+                description: ScaleUpCooldownSeconds. nil means "defer to classifier".
+                format: int32
+                minimum: 0
+                type: integer
+              targetRef:
+                description: TargetRef points at the Deployment to autoscale.
+                properties:
+                  apiVersion:
+                    description: APIVersion of the target (e.g. "apps/v1").
+                    type: string
+                  kind:
+                    description: Kind of the target. Only "Deployment" is supported
+                      in this version.
+                    enum:
+                    - Deployment
+                    type: string
+                  name:
+                    description: Name of the target.
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - name
+                type: object
+            required:
+            - targetRef
             type: object
           status:
-            description: AgenticAutoscalerStatus defines the observed state of AgenticAutoscaler.
+            description: |-
+              AgenticAutoscalerStatus reports the controller's observed state.
+              See docs/design.md §4.
+            properties:
+              classifiedParams:
+                description: ClassifiedParams is the classifier's most recent recommendation.
+                properties:
+                  classifiedAt:
+                    description: ClassifiedAt is the timestamp of the most recent
+                      classification.
+                    format: date-time
+                    type: string
+                  confidence:
+                    description: |-
+                      Confidence is "high" if HistoryPoints >= CLASSIFIER_HIGH_CONFIDENCE_POINTS,
+                      otherwise "medium". See docs/design.md §4.
+                    enum:
+                    - high
+                    - medium
+                    type: string
+                  historyPoints:
+                    description: HistoryPoints is the count of Prometheus data points
+                      used.
+                    format: int32
+                    type: integer
+                  maxStepSize:
+                    description: MaxStepSize is the classifier's recommended maximum
+                      replica delta per reconcile.
+                    format: int32
+                    type: integer
+                  pattern:
+                    description: 'Pattern is one of: flat, periodic, spiky, gradual_ramp,
+                      default.'
+                    enum:
+                    - flat
+                    - periodic
+                    - spiky
+                    - gradual_ramp
+                    - default
+                    type: string
+                  preferredForecaster:
+                    description: PreferredForecaster is "prophet" or "linear_extrap".
+                    enum:
+                    - prophet
+                    - linear_extrap
+                    type: string
+                  scaleDownCooldownSeconds:
+                    description: ScaleDownCooldownSeconds is the classifier's recommended
+                      scale-down cooldown.
+                    format: int32
+                    type: integer
+                  scaleUpCooldownSeconds:
+                    description: ScaleUpCooldownSeconds is the classifier's recommended
+                      scale-up cooldown.
+                    format: int32
+                    type: integer
+                required:
+                - classifiedAt
+                - confidence
+                - historyPoints
+                - maxStepSize
+                - pattern
+                - preferredForecaster
+                - scaleDownCooldownSeconds
+                - scaleUpCooldownSeconds
+                type: object
+              conflictReason:
+                description: ConflictReason is populated only when Phase=Conflict.
+                type: string
+              currentReplicas:
+                description: CurrentReplicas is the live replica count of the target
+                  Deployment.
+                format: int32
+                type: integer
+              lastScaleTime:
+                description: |-
+                  LastScaleTime is the most recent scale event in either direction:
+                  max(lastScaleUpTime, lastScaleDownTime).
+                format: date-time
+                type: string
+              phase:
+                description: Phase is the high-level controller state.
+                enum:
+                - Ready
+                - Disabled
+                - Conflict
+                type: string
+              predictedRPS:
+                description: PredictedRPS is the most recent forecast.
+                format: int32
+                type: integer
+              recommendedReplicas:
+                description: |-
+                  RecommendedReplicas is the pre-cap, pre-cooldown replica recommendation.
+                  See docs/design.md §5 step 5.
+                format: int32
+                type: integer
+              rpsPerPodCurrent:
+                description: |-
+                  RpsPerPodCurrent is the live sliding-window median rps_per_pod.
+                  Persisted for restart recovery (see docs/design.md §5).
+                format: int32
+                type: integer
             type: object
         type: object
     served: true

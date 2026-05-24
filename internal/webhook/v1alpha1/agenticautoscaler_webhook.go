@@ -58,41 +58,32 @@ type AgenticAutoscalerCustomValidator struct {
 
 var _ webhook.CustomValidator = &AgenticAutoscalerCustomValidator{}
 
-// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type AgenticAutoscaler.
+// ValidateCreate implements webhook.CustomValidator: enforces the design §4
+// bound checks on Create.
 func (v *AgenticAutoscalerCustomValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	agenticautoscaler, ok := obj.(*autoscalingv1alpha1.AgenticAutoscaler)
+	aas, ok := obj.(*autoscalingv1alpha1.AgenticAutoscaler)
 	if !ok {
 		return nil, fmt.Errorf("expected a AgenticAutoscaler object but got %T", obj)
 	}
-	agenticautoscalerlog.Info("Validation for AgenticAutoscaler upon creation", "name", agenticautoscaler.GetName())
-
-	// TODO(user): fill in your validation logic upon object creation.
-
-	return nil, nil
+	agenticautoscalerlog.Info("Validation for AgenticAutoscaler upon creation", "name", aas.GetName())
+	return nil, ValidateSpec(&aas.Spec)
 }
 
-// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type AgenticAutoscaler.
+// ValidateUpdate implements webhook.CustomValidator: re-runs the same bound
+// checks on Update so a CR can never be edited into an invalid state.
 func (v *AgenticAutoscalerCustomValidator) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	agenticautoscaler, ok := newObj.(*autoscalingv1alpha1.AgenticAutoscaler)
+	aas, ok := newObj.(*autoscalingv1alpha1.AgenticAutoscaler)
 	if !ok {
 		return nil, fmt.Errorf("expected a AgenticAutoscaler object for the newObj but got %T", newObj)
 	}
-	agenticautoscalerlog.Info("Validation for AgenticAutoscaler upon update", "name", agenticautoscaler.GetName())
-
-	// TODO(user): fill in your validation logic upon object update.
-
-	return nil, nil
+	agenticautoscalerlog.Info("Validation for AgenticAutoscaler upon update", "name", aas.GetName())
+	return nil, ValidateSpec(&aas.Spec)
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type AgenticAutoscaler.
+// ValidateDelete is a no-op: design §4 specifies no delete-time invariants.
 func (v *AgenticAutoscalerCustomValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	agenticautoscaler, ok := obj.(*autoscalingv1alpha1.AgenticAutoscaler)
-	if !ok {
-		return nil, fmt.Errorf("expected a AgenticAutoscaler object but got %T", obj)
+	if aas, ok := obj.(*autoscalingv1alpha1.AgenticAutoscaler); ok {
+		agenticautoscalerlog.Info("Validation for AgenticAutoscaler upon deletion", "name", aas.GetName())
 	}
-	agenticautoscalerlog.Info("Validation for AgenticAutoscaler upon deletion", "name", agenticautoscaler.GetName())
-
-	// TODO(user): fill in your validation logic upon object deletion.
-
 	return nil, nil
 }

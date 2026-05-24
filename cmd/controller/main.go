@@ -38,10 +38,12 @@ import (
 
 	autoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/api/v1alpha1"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/forecast"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/ollama"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/prometheus"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/controller"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/explainer"
 	webhookautoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -186,6 +188,20 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
+	// ExplainWorker: consumes the same explainCh the reconciler writes to.
+	// Always starts; design §6.2 says no API-key gate. If Ollama is down or
+	// the model isn't pulled, the worker logs and continues.
+	explainWorker := &explainer.Worker{
+		Ollama:        ollama.New(cfg.OllamaURL, cfg.OllamaTimeout),
+		EventRecorder: mgr.GetEventRecorderFor("agenticautoscaler-explainer"),
+		Client:        mgr.GetClient(),
+		Config: explainer.WorkerConfig{
+			Model:     cfg.OllamaModel,
+			MaxTokens: int(cfg.OllamaMaxTokens),
+			Timeout:   cfg.OllamaTimeout,
+		},
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -196,7 +212,9 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	signalCtx := ctrl.SetupSignalHandler()
+	go explainWorker.Run(signalCtx, explainCh)
+	if err := mgr.Start(signalCtx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

@@ -223,14 +223,21 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if capOut.ShouldPatch {
 		r.ExplainNotify.Notify(ExplainRequest{
-			Namespace:       aas.Namespace,
-			Name:            aas.Name,
-			Reason:          capOut.Reason,
-			CurrentReplicas: currentReplicas,
-			TargetReplicas:  capOut.Target,
-			CurrentRPS:      currentRPS,
-			PredictedRPS:    forecastResp.PredictedRPS,
-			ModelUsed:       forecastResp.ModelUsed,
+			Namespace:             aas.Namespace,
+			Name:                  aas.Name,
+			Reason:                capOut.Reason,
+			CurrentReplicas:       currentReplicas,
+			RecommendedReplicas:   recommended,
+			TargetReplicas:        capOut.Target,
+			CurrentRPS:            currentRPS,
+			PredictedRPS:          forecastResp.PredictedRPS,
+			HorizonMinutes:        int(r.Config.ForecastHorizon / time.Minute),
+			ModelUsed:             forecastResp.ModelUsed,
+			Pattern:               classifiedPattern(&aas),
+			Confidence:            classifiedConfidence(&aas),
+			EffectiveCooldownUp:   effective.CooldownUp,
+			EffectiveCooldownDown: effective.CooldownDown,
+			EffectiveMaxStep:      effective.MaxStep,
 		})
 	}
 
@@ -385,4 +392,22 @@ func laterOf(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// classifiedPattern returns the pattern name from status.classifiedParams,
+// or the empty string when the classifier has not yet run for this CR.
+// The empty string is the explicit "no classification yet" signal.
+func classifiedPattern(aas *autoscalingv1alpha1.AgenticAutoscaler) string {
+	if aas.Status.ClassifiedParams == nil {
+		return ""
+	}
+	return aas.Status.ClassifiedParams.Pattern
+}
+
+// classifiedConfidence mirrors classifiedPattern for the confidence field.
+func classifiedConfidence(aas *autoscalingv1alpha1.AgenticAutoscaler) string {
+	if aas.Status.ClassifiedParams == nil {
+		return ""
+	}
+	return aas.Status.ClassifiedParams.Confidence
 }

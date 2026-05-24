@@ -33,16 +33,25 @@ type Forecaster interface {
 
 // ExplainRequest carries the context for a scale-explanation LLM call. It is
 // produced by the reconciler on every replica-changing event and consumed by
-// the ExplainWorker (Plan #6).
+// the ExplainWorker (Plan #6). Field set matches docs/design.md §6.2 — adding
+// or renaming a field requires updating the prompt template in
+// internal/explainer/prompt.go.
 type ExplainRequest struct {
-	Namespace       string
-	Name            string
-	Reason          string
-	CurrentReplicas int32
-	TargetReplicas  int32
-	CurrentRPS      float64
-	PredictedRPS    float64
-	ModelUsed       string
+	Namespace             string
+	Name                  string
+	Reason                string  // reasoning token from internal/reasoning
+	CurrentReplicas       int32
+	RecommendedReplicas   int32   // pre-cap, pre-cooldown recommendation
+	TargetReplicas        int32   // post-cap (what was patched onto /scale)
+	CurrentRPS            float64
+	PredictedRPS          float64
+	HorizonMinutes        int     // forecast horizon
+	ModelUsed             string  // forecast model name
+	Pattern               string  // status.classifiedParams.pattern; "" if not yet classified
+	Confidence            string  // "high"/"medium"/"" (mirrors Pattern's nil semantics)
+	EffectiveCooldownUp   int32
+	EffectiveCooldownDown int32
+	EffectiveMaxStep      int32
 }
 
 // ExplainNotifier signals the ExplainWorker of a scaling event. The contract

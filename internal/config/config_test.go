@@ -129,3 +129,72 @@ func TestLoadFromEnv_OllamaOverrides(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.OllamaTimeout)
 	assert.Equal(t, int32(300), cfg.OllamaMaxTokens)
 }
+
+func TestLoadFromEnv_RejectsClassifierMinPointsBelow70(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("CLASSIFIER_MIN_POINTS", "50")
+
+	_, err := LoadFromEnv()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CLASSIFIER_MIN_POINTS")
+	assert.Contains(t, err.Error(), "70")
+}
+
+func TestLoadFromEnv_RejectsNegativeCooldowns(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("DEFAULT_SCALE_UP_COOLDOWN_SECONDS", "-1")
+
+	_, err := LoadFromEnv()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DEFAULT_SCALE_UP_COOLDOWN_SECONDS")
+}
+
+func TestLoadFromEnv_RejectsZeroMaxStepSize(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("DEFAULT_MAX_STEP_SIZE", "0")
+
+	_, err := LoadFromEnv()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "DEFAULT_MAX_STEP_SIZE")
+}
+
+func TestLoadFromEnv_RejectsHotPathMinPointsZero(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("HOT_PATH_MIN_POINTS", "0")
+
+	_, err := LoadFromEnv()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HOT_PATH_MIN_POINTS")
+}
+
+func TestLoadFromEnv_RejectsHighConfidenceBelowMinPoints(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("CLASSIFIER_MIN_POINTS", "100")
+	t.Setenv("CLASSIFIER_HIGH_CONFIDENCE_POINTS", "80")
+
+	_, err := LoadFromEnv()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CLASSIFIER_HIGH_CONFIDENCE_POINTS")
+	assert.Contains(t, err.Error(), "CLASSIFIER_MIN_POINTS")
+}
+
+func TestLoadFromEnv_AcceptsAllValidOverrides(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("CLASSIFIER_MIN_POINTS", "100")
+	t.Setenv("CLASSIFIER_HIGH_CONFIDENCE_POINTS", "300")
+	t.Setenv("DEFAULT_SCALE_UP_COOLDOWN_SECONDS", "0")
+	t.Setenv("DEFAULT_MAX_STEP_SIZE", "1")
+
+	cfg, err := LoadFromEnv()
+
+	require.NoError(t, err)
+	assert.Equal(t, int32(100), cfg.ClassifierMinPoints)
+	assert.Equal(t, int32(300), cfg.ClassifierHighConfidencePoints)
+	assert.Equal(t, time.Duration(0), cfg.DefaultScaleUpCooldown)
+	assert.Equal(t, int32(1), cfg.DefaultMaxStepSize)
+}

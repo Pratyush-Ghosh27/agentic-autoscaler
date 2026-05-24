@@ -122,8 +122,55 @@ func LoadFromEnv() (Config, error) {
 	cfg.OllamaTimeout = envSecondsOrDefault("OLLAMA_TIMEOUT_SECONDS", 30*time.Second, &errs)
 	cfg.OllamaMaxTokens = envIntOrDefault("OLLAMA_MAX_TOKENS", 150, &errs)
 
+	errs = append(errs, cfg.validate()...)
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("config validation failed: %v", errs)
 	}
 	return cfg, nil
+}
+
+// validate runs cross-field bound checks. Per docs/design.md §4 and §7.
+func (c Config) validate() []string {
+	var errs []string
+
+	// §7 hard floor for tod_correlation to be computable.
+	if c.ClassifierMinPoints < 70 {
+		errs = append(errs, fmt.Sprintf(
+			"CLASSIFIER_MIN_POINTS=%d violates the design §7 floor of 70 (tod_correlation requires 60-point lag + 10 minimum overlap)",
+			c.ClassifierMinPoints))
+	}
+
+	// High confidence must require at least as many points as medium confidence.
+	if c.ClassifierHighConfidencePoints < c.ClassifierMinPoints {
+		errs = append(errs, fmt.Sprintf(
+			"CLASSIFIER_HIGH_CONFIDENCE_POINTS=%d must be >= CLASSIFIER_MIN_POINTS=%d",
+			c.ClassifierHighConfidencePoints, c.ClassifierMinPoints))
+	}
+
+	// Step sizes must be at least 1 to allow any movement.
+	if c.DefaultMaxStepSize < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"DEFAULT_MAX_STEP_SIZE=%d must be >= 1", c.DefaultMaxStepSize))
+	}
+
+	// Min points for the hot path must be at least 1.
+	if c.HotPathMinPoints < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"HOT_PATH_MIN_POINTS=%d must be >= 1", c.HotPathMinPoints))
+	}
+
+	// Negative cooldowns are never sensible; zero is an explicit no-cooldown opt.
+	if c.DefaultScaleUpCooldown < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"DEFAULT_SCALE_UP_COOLDOWN_SECONDS=%d must be >= 0",
+			int(c.DefaultScaleUpCooldown/time.Second)))
+	}
+	if c.DefaultScaleDownCooldown < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS=%d must be >= 0",
+			int(c.DefaultScaleDownCooldown/time.Second)))
+	}
+
+	return errs
 }

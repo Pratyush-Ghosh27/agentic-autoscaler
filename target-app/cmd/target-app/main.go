@@ -5,14 +5,24 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/pratyush-ghosh/agentic-autoscaler/target-app/internal/server"
 )
 
 func main() {
-	srv := server.New(server.DefaultConfig())
-	addr := ":8080"
-	log.Printf("target-app listening on %s", addr)
+	cfg := server.LoadConfig()
+	srv := server.New(cfg)
+
+	port := os.Getenv("TARGET_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
+
+	log.Printf("target-app starting: addr=%s concurrency=%d work_duration_ms=%d work_jitter_ms=%d",
+		addr, cfg.Concurrency, cfg.WorkDurationMS, cfg.WorkJitterMS)
+
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

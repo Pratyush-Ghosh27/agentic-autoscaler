@@ -135,6 +135,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		log.Error(err, "prometheus instant query failed")
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, err.Error())
+		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 
@@ -144,11 +145,13 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		log.Error(err, "prometheus range query failed")
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, err.Error())
+		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 	if len(samples) < int(r.Config.HotPathMinPoints) {
 		msg := fmt.Sprintf("only %d range samples (need %d)", len(samples), r.Config.HotPathMinPoints)
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, msg)
+		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 	rpsHistory := make([]float64, len(samples))
@@ -170,6 +173,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err != nil {
 		log.Error(err, "forecast service call failed")
 		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.ForecastUnavailable, err.Error())
+		observeForecastFailure(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 
@@ -246,6 +250,14 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
 		"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
 		currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+
+	// Record per-reconcile gauges + scale-events counter. Done after
+	// the decision, before status update, so a status-update failure
+	// doesn't double-count.
+	observeReconcile(aas.Namespace, aas.Name, capOut.Reason,
+		currentRPS, forecastResp.PredictedRPS, rpsPerPod)
+	observeClassification(aas.Namespace, aas.Name,
+		classifiedPattern(&aas), classifiedConfidence(&aas))
 
 	if capOut.ShouldPatch {
 		r.ExplainNotify.Notify(ExplainRequest{

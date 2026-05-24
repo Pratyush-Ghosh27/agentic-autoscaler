@@ -38,6 +38,7 @@ import (
 
 	autoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/api/v1alpha1"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
+	webhookautoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -153,6 +154,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err = webhookautoscalingv1alpha1.SetupAgenticAutoscalerWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "AgenticAutoscaler")
+			os.Exit(1)
+		}
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -29,6 +29,7 @@ import (
 
 	autoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/api/v1alpha1"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/forecast"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/classifier"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/promql"
@@ -56,6 +57,11 @@ type AgenticAutoscalerReconciler struct {
 	Forecaster    Forecaster
 	ExplainNotify ExplainNotifier
 	StateStore    *decision.StateStore
+	// Classifier owns the ClassifierWorker goroutine for each CR. May be
+	// nil in unit tests that exercise pure reconcile behaviour without
+	// the cold-path; production wiring (cmd/controller/main.go) always
+	// supplies a real manager.
+	Classifier *classifier.Manager
 	// Now is injected for testability. Defaults to time.Now via nowFunc().
 	Now func() time.Time
 }
@@ -89,8 +95,21 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err := r.Get(ctx, req.NamespacedName, &aas); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			r.StateStore.Delete(req.NamespacedName)
+			if r.Classifier != nil {
+				r.Classifier.Stop(req.NamespacedName)
+			}
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Cold-path lifecycle: ensure a ClassifierWorker is running for this
+	// CR (idempotent; no-op once the worker is started). The worker's
+	// own immediate-first-run trigger handles initial classification.
+	if r.Classifier != nil {
+		r.Classifier.Ensure(&aas)
+		if aas.Annotations[reasoning.AnnotationReclassify] == "true" {
+			r.Classifier.SignalReclassify(req.NamespacedName)
+		}
 	}
 
 	// Pre-check 1a: kill-switch.
@@ -159,6 +178,12 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if err := r.Get(ctx, types.NamespacedName{Namespace: aas.Namespace, Name: deployName}, &deploy); err != nil {
 		log.Error(err, "failed to get target Deployment")
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
+	}
+	// Generation-change detection (design §6.1 trigger 4). The classifier
+	// manager dedups against the last seen value, so this call is
+	// safe to make on every reconcile. Skipped when Classifier is nil.
+	if r.Classifier != nil {
+		r.Classifier.ObserveDeploymentGeneration(req.NamespacedName, deploy.Generation)
 	}
 	currentReplicas := int32(1)
 	if deploy.Spec.Replicas != nil {

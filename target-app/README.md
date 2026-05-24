@@ -12,7 +12,7 @@ so the two scalers can be compared on identical workloads.
 | `GET /work` | Acquires a semaphore slot, sleeps `TARGET_WORK_DURATION_MS ± TARGET_WORK_JITTER_MS`, returns 200. Returns 503 immediately if no slot is available. |
 | `GET /healthz` | Always returns 200 `{"status":"ok"}`. |
 | `GET /readyz` | Returns 200 by default; 503 if `SetReady(false)` has been called (test hook). |
-| `GET /metrics` | Prometheus exposition: `target_app_request_duration_seconds` (histogram, 1 ms-10 s buckets, label: `path`) and `target_app_requests_total` (counter, labels: `path`, `status`). |
+| `GET /metrics` | Prometheus exposition: `http_request_duration_seconds` (histogram, 1 ms-10 s buckets, label: `path`) and `http_requests_total` (counter, labels: `path`, `status`). |
 
 ## Configuration
 

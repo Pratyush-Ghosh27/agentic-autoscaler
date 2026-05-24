@@ -39,15 +39,15 @@ query() {
 }
 
 echo "==> querying p99 over the last ${WINDOW}"
-P99_AGENTIC=$(query "histogram_quantile(0.99, sum by (le) (rate(target_app_request_duration_seconds_bucket{deployment=\"app-agentic\"}[${WINDOW}])))")
-P99_HPA=$(query     "histogram_quantile(0.99, sum by (le) (rate(target_app_request_duration_seconds_bucket{deployment=\"app-hpa\"}[${WINDOW}])))")
+P99_AGENTIC=$(query "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{deployment=\"app-agentic\"}[${WINDOW}])))")
+P99_HPA=$(query     "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{deployment=\"app-hpa\"}[${WINDOW}])))")
 
 echo "    p99 agentic : ${P99_AGENTIC}s"
 echo "    p99 hpa     : ${P99_HPA}s"
 
 echo "==> querying 5xx rate over the last ${WINDOW}"
-E5XX_AGENTIC=$(query "sum(rate(target_app_requests_total{deployment=\"app-agentic\",status=~\"5..\"}[${WINDOW}]))")
-E5XX_HPA=$(query     "sum(rate(target_app_requests_total{deployment=\"app-hpa\",status=~\"5..\"}[${WINDOW}]))")
+E5XX_AGENTIC=$(query "sum(rate(http_requests_total{deployment=\"app-agentic\",status=~\"5..\"}[${WINDOW}]))")
+E5XX_HPA=$(query     "sum(rate(http_requests_total{deployment=\"app-hpa\",status=~\"5..\"}[${WINDOW}]))")
 
 echo "    5xx/s agentic : ${E5XX_AGENTIC}"
 echo "    5xx/s hpa     : ${E5XX_HPA}"

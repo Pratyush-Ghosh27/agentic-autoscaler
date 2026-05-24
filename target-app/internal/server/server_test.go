@@ -67,10 +67,10 @@ func TestMetrics_ExposesHistogramAndCounter(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	assert.Contains(t, body, "target_app_request_duration_seconds")
-	assert.Contains(t, body, "target_app_requests_total")
-	assert.True(t, strings.Contains(body, "# TYPE target_app_request_duration_seconds histogram"))
-	assert.True(t, strings.Contains(body, "# TYPE target_app_requests_total counter"))
+	assert.Contains(t, body, "http_request_duration_seconds")
+	assert.Contains(t, body, "http_requests_total")
+	assert.True(t, strings.Contains(body, "# TYPE http_request_duration_seconds histogram"))
+	assert.True(t, strings.Contains(body, "# TYPE http_requests_total counter"))
 }
 
 func TestMetrics_HistogramBucketsCover1msTo10s(t *testing.T) {
@@ -109,7 +109,7 @@ func TestWork_HistogramObservedAfterRequest(t *testing.T) {
 	srv.Handler().ServeHTTP(mrec, mreq)
 
 	body := mrec.Body.String()
-	assert.Contains(t, body, `target_app_request_duration_seconds_count{deployment="app-test",path="/work"} 1`)
+	assert.Contains(t, body, `http_request_duration_seconds_count{deployment="app-test",path="/work"} 1`)
 }
 
 func TestWork_CounterIncrementedWithStatus200(t *testing.T) {
@@ -125,7 +125,7 @@ func TestWork_CounterIncrementedWithStatus200(t *testing.T) {
 	srv.Handler().ServeHTTP(mrec, mreq)
 
 	body := mrec.Body.String()
-	assert.Contains(t, body, `target_app_requests_total{deployment="app-test",path="/work",status="200"} 1`)
+	assert.Contains(t, body, `http_requests_total{deployment="app-test",path="/work",status="200"} 1`)
 }
 
 func TestWork_BurstAboveSemaphoreLimit_Returns503(t *testing.T) {
@@ -175,7 +175,7 @@ func TestWork_503CounterLabeledCorrectly(t *testing.T) {
 	handler.ServeHTTP(mrec, mreq)
 
 	body := mrec.Body.String()
-	assert.Contains(t, body, `target_app_requests_total{deployment="app-test",path="/work",status="503"} 1`)
+	assert.Contains(t, body, `http_requests_total{deployment="app-test",path="/work",status="503"} 1`)
 }
 
 func TestMetrics_DefaultConfigEmitsDeploymentLabelEqualUnknown(t *testing.T) {
@@ -186,8 +186,8 @@ func TestMetrics_DefaultConfigEmitsDeploymentLabelEqualUnknown(t *testing.T) {
 
 	body := rec.Body.String()
 	// Pre-instantiated label rows must carry the const label.
-	assert.Contains(t, body, `target_app_requests_total{deployment="unknown",path="/work",status="200"} 0`)
-	assert.Contains(t, body, `target_app_requests_total{deployment="unknown",path="/work",status="503"} 0`)
+	assert.Contains(t, body, `http_requests_total{deployment="unknown",path="/work",status="200"} 0`)
+	assert.Contains(t, body, `http_requests_total{deployment="unknown",path="/work",status="503"} 0`)
 }
 
 func TestMetrics_EmptyDeploymentNameFallsBackToUnknown(t *testing.T) {

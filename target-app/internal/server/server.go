@@ -61,9 +61,15 @@ func New(cfg Config) *Server {
 	}
 	constLabels := prometheus.Labels{"deployment": deploymentName}
 
+	// Metric NAMES intentionally match the design's PromQL convention
+	// (`http_requests_total`, `http_request_duration_seconds`) — see
+	// docs/design.md §5 step 2 and internal/promql/builder.go. The earlier
+	// `target_app_*` prefix was application-specific and broke every
+	// controller / assertion / dashboard query that filtered on the
+	// design's generic name. Keep these names locked.
 	histogram := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:        "target_app_request_duration_seconds",
+			Name:        "http_request_duration_seconds",
 			Help:        "End-to-end request duration in seconds.",
 			ConstLabels: constLabels,
 			Buckets: []float64{
@@ -76,7 +82,7 @@ func New(cfg Config) *Server {
 
 	counter := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name:        "target_app_requests_total",
+			Name:        "http_requests_total",
 			Help:        "Total number of requests, labeled by status.",
 			ConstLabels: constLabels,
 		},

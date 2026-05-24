@@ -39,11 +39,11 @@ curl -s -X POST http://admin:prom-operator@localhost:3000/api/dashboards/db \
 
 | #  | Panel                  | Source metric                                           | Notes                                  |
 | -- | ---------------------- | ------------------------------------------------------- | -------------------------------------- |
-| 1  | Current RPS            | `target_app_requests_total` rate over 2m                | Both targets overlaid                  |
+| 1  | Current RPS            | `http_requests_total` rate over 2m                | Both targets overlaid                  |
 | 2  | Replica count          | `kube_deployment_spec_replicas`                         | The headline scaling comparison        |
 | 3  | Predicted RPS          | controller annotation/Event-derived series              | Latest forecast for the agentic target |
-| 4  | p99 latency            | `target_app_request_duration_seconds_bucket` histogram  | The SLO-relevant tail metric           |
-| 5  | 5xx rate               | `target_app_requests_total{status=~"5.."}` rate         | Lower-is-better for both reconcilers   |
+| 4  | p99 latency            | `http_request_duration_seconds_bucket` histogram  | The SLO-relevant tail metric           |
+| 5  | 5xx rate               | `http_requests_total{status=~"5.."}` rate         | Lower-is-better for both reconcilers   |
 | 6  | Scaling Events         | `kube_event_count`                                       | Filtered by reasoning tokens           |
 | 7  | Classified pattern     | controller status / kube-state-metrics CR projection    | Current pattern + confidence           |
 

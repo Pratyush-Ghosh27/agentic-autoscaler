@@ -47,8 +47,8 @@ Both invocations run `test/e2e/run.sh`, which:
 
 | Signal       | PromQL                                                                                   |
 | ------------ | ---------------------------------------------------------------------------------------- |
-| p99 latency  | `histogram_quantile(0.99, sum by (le) (rate(target_app_request_duration_seconds_bucket[25m])))` |
-| 5xx rate    | `sum(rate(target_app_requests_total{status=~"5.."}[25m]))`                              |
+| p99 latency  | `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[25m])))` |
+| 5xx rate    | `sum(rate(http_requests_total{status=~"5.."}[25m]))`                              |
 
 Both filters narrow on `deployment="app-agentic"` vs `deployment="app-hpa"`,
 which the metrics adapter populates from the pod's owning Deployment.

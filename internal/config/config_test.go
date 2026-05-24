@@ -77,3 +77,55 @@ func TestLoadFromEnv_HotPathOverrides(t *testing.T) {
 	assert.Equal(t, 10*time.Second, cfg.ForecastTimeout)
 	assert.Equal(t, int32(90), cfg.ProphetMinPoints)
 }
+
+func TestLoadFromEnv_ColdPathDefaults(t *testing.T) {
+	withRequiredEnv(t)
+
+	cfg, err := LoadFromEnv()
+
+	require.NoError(t, err)
+	assert.Equal(t, 30*time.Minute, cfg.ClassifierInterval)
+	assert.Equal(t, 24*time.Hour, cfg.ClassifierHistory)
+	assert.Equal(t, int32(70), cfg.ClassifierMinPoints)
+	assert.Equal(t, int32(240), cfg.ClassifierHighConfidencePoints)
+	assert.Equal(t, 60*time.Second, cfg.ClassifierDedup)
+}
+
+func TestLoadFromEnv_PreClassificationDefaults(t *testing.T) {
+	withRequiredEnv(t)
+
+	cfg, err := LoadFromEnv()
+
+	require.NoError(t, err)
+	assert.Equal(t, 60*time.Second, cfg.DefaultScaleUpCooldown)
+	assert.Equal(t, 300*time.Second, cfg.DefaultScaleDownCooldown)
+	assert.Equal(t, int32(4), cfg.DefaultMaxStepSize)
+}
+
+func TestLoadFromEnv_OllamaDefaults(t *testing.T) {
+	withRequiredEnv(t)
+
+	cfg, err := LoadFromEnv()
+
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:11434", cfg.OllamaURL)
+	assert.Equal(t, "llama3.2", cfg.OllamaModel)
+	assert.Equal(t, 30*time.Second, cfg.OllamaTimeout)
+	assert.Equal(t, int32(150), cfg.OllamaMaxTokens)
+}
+
+func TestLoadFromEnv_OllamaOverrides(t *testing.T) {
+	withRequiredEnv(t)
+	t.Setenv("OLLAMA_URL", "http://ollama.svc:11434")
+	t.Setenv("OLLAMA_MODEL", "phi3")
+	t.Setenv("OLLAMA_TIMEOUT_SECONDS", "60")
+	t.Setenv("OLLAMA_MAX_TOKENS", "300")
+
+	cfg, err := LoadFromEnv()
+
+	require.NoError(t, err)
+	assert.Equal(t, "http://ollama.svc:11434", cfg.OllamaURL)
+	assert.Equal(t, "phi3", cfg.OllamaModel)
+	assert.Equal(t, 60*time.Second, cfg.OllamaTimeout)
+	assert.Equal(t, int32(300), cfg.OllamaMaxTokens)
+}

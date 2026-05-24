@@ -24,6 +24,24 @@ type Config struct {
 	ForecastHorizon   time.Duration // FORECAST_HORIZON_MINUTES, default 10m
 	ForecastTimeout   time.Duration // FORECAST_TIMEOUT_SECONDS, default 5s
 	ProphetMinPoints  int32         // PROPHET_MIN_POINTS, default 60
+
+	// Cold-path timing.
+	ClassifierInterval             time.Duration // CLASSIFIER_INTERVAL_MINUTES, default 30m
+	ClassifierHistory              time.Duration // CLASSIFIER_HISTORY_HOURS, default 24h
+	ClassifierMinPoints            int32         // CLASSIFIER_MIN_POINTS, default 70 (must be >= 70 per §7)
+	ClassifierHighConfidencePoints int32         // CLASSIFIER_HIGH_CONFIDENCE_POINTS, default 240
+	ClassifierDedup                time.Duration // CLASSIFIER_DEDUP_SECONDS, default 60s
+
+	// Pre-classification reconcile defaults.
+	DefaultScaleUpCooldown   time.Duration // DEFAULT_SCALE_UP_COOLDOWN_SECONDS, default 60s
+	DefaultScaleDownCooldown time.Duration // DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS, default 300s
+	DefaultMaxStepSize       int32         // DEFAULT_MAX_STEP_SIZE, default 4
+
+	// Ollama (ExplainWorker).
+	OllamaURL       string        // OLLAMA_URL, default http://localhost:11434
+	OllamaModel     string        // OLLAMA_MODEL, default llama3.2
+	OllamaTimeout   time.Duration // OLLAMA_TIMEOUT_SECONDS, default 30s
+	OllamaMaxTokens int32         // OLLAMA_MAX_TOKENS, default 150
 }
 
 // envIntOrDefault reads an integer env var, returns the default if unset.
@@ -54,6 +72,20 @@ func envMinutesOrDefault(name string, def time.Duration, errs *[]string) time.Du
 	return time.Duration(v) * time.Minute
 }
 
+// envHoursOrDefault reads an hours-valued env var as a Duration.
+func envHoursOrDefault(name string, def time.Duration, errs *[]string) time.Duration {
+	v := envIntOrDefault(name, int32(def/time.Hour), errs)
+	return time.Duration(v) * time.Hour
+}
+
+// envStringOrDefault returns the env var or def if unset.
+func envStringOrDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
 // LoadFromEnv reads the controller config from environment variables.
 // Returns an error listing every problem found, so a misconfigured
 // operator sees all issues at once rather than fixing them one at a time.
@@ -74,6 +106,21 @@ func LoadFromEnv() (Config, error) {
 	cfg.ForecastHorizon = envMinutesOrDefault("FORECAST_HORIZON_MINUTES", 10*time.Minute, &errs)
 	cfg.ForecastTimeout = envSecondsOrDefault("FORECAST_TIMEOUT_SECONDS", 5*time.Second, &errs)
 	cfg.ProphetMinPoints = envIntOrDefault("PROPHET_MIN_POINTS", 60, &errs)
+
+	cfg.ClassifierInterval = envMinutesOrDefault("CLASSIFIER_INTERVAL_MINUTES", 30*time.Minute, &errs)
+	cfg.ClassifierHistory = envHoursOrDefault("CLASSIFIER_HISTORY_HOURS", 24*time.Hour, &errs)
+	cfg.ClassifierMinPoints = envIntOrDefault("CLASSIFIER_MIN_POINTS", 70, &errs)
+	cfg.ClassifierHighConfidencePoints = envIntOrDefault("CLASSIFIER_HIGH_CONFIDENCE_POINTS", 240, &errs)
+	cfg.ClassifierDedup = envSecondsOrDefault("CLASSIFIER_DEDUP_SECONDS", 60*time.Second, &errs)
+
+	cfg.DefaultScaleUpCooldown = envSecondsOrDefault("DEFAULT_SCALE_UP_COOLDOWN_SECONDS", 60*time.Second, &errs)
+	cfg.DefaultScaleDownCooldown = envSecondsOrDefault("DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS", 300*time.Second, &errs)
+	cfg.DefaultMaxStepSize = envIntOrDefault("DEFAULT_MAX_STEP_SIZE", 4, &errs)
+
+	cfg.OllamaURL = envStringOrDefault("OLLAMA_URL", "http://localhost:11434")
+	cfg.OllamaModel = envStringOrDefault("OLLAMA_MODEL", "llama3.2")
+	cfg.OllamaTimeout = envSecondsOrDefault("OLLAMA_TIMEOUT_SECONDS", 30*time.Second, &errs)
+	cfg.OllamaMaxTokens = envIntOrDefault("OLLAMA_MAX_TOKENS", 150, &errs)
 
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("config validation failed: %v", errs)

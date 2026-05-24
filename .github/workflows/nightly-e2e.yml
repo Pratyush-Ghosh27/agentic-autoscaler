@@ -1,9 +1,15 @@
 # ---------------------------------------------------------------------
 # Nightly quantitative E2E.
 #
-# Runs the full agentic vs HPA comparison on a kind cluster with an
-# Ollama instance for explanations. Caches the model weights so we don't
-# pay the pull cost every night.
+# Runs the full agentic vs HPA comparison on a kind cluster. The
+# previous version of this workflow installed Ollama and pulled a
+# language model "for explanations", but the ExplainerWorker's Ollama
+# adapter is never reachable from the runner-side install — the worker
+# runs inside the kind cluster, expects OLLAMA_URL to point at an
+# in-cluster service, and would have to talk back through the kind
+# Docker network. None of that wiring exists, so every nightly was
+# spending ~2-3 minutes downloading model weights for a code path that
+# was never exercised. See docs/gap-report-v1.md G5.
 #
 # Failure here does *not* block PRs — it's a regression alarm; commits
 # that introduce SLO regressions land green, and the next nightly run
@@ -20,10 +26,18 @@ on:
         description: "Tolerance multiplier for the agentic vs HPA comparison"
         required: false
         default: "1.25"
-      ramp_duration:
-        description: "k6 ramp HOLD duration (full run = 5m up + HOLD + 5m down)"
+      ramp_up_duration:
+        description: "k6 ramp UP phase duration (default 5m)"
+        required: false
+        default: "5m"
+      ramp_hold_duration:
+        description: "k6 ramp HOLD phase duration (default 15m)"
         required: false
         default: "15m"
+      ramp_down_duration:
+        description: "k6 ramp DOWN phase duration (default 5m)"
+        required: false
+        default: "5m"
 
 permissions:
   contents: read
@@ -34,13 +48,14 @@ env:
   KIND_VERSION: "v0.24.0"
   HELM_VERSION: "v3.16.0"
   K6_VERSION: "v0.54.0"
-  OLLAMA_MODEL: phi3
   TOLERANCE: ${{ inputs.tolerance || '1.25' }}
-  RAMP_DURATION: ${{ inputs.ramp_duration || '15m' }}
+  RAMP_UP_DURATION:   ${{ inputs.ramp_up_duration   || '5m'  }}
+  RAMP_HOLD_DURATION: ${{ inputs.ramp_hold_duration || '15m' }}
+  RAMP_DOWN_DURATION: ${{ inputs.ramp_down_duration || '5m'  }}
 
 jobs:
   e2e:
-    name: kind + helm + ollama + k6 + Prometheus assertions
+    name: kind + helm + k6 + Prometheus assertions
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -74,26 +89,6 @@ jobs:
 
       - name: Install jq
         run: sudo apt-get install -y jq
-
-      # ---- Ollama (cached weights) ----
-      - name: Install Ollama
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          for _ in $(seq 1 30); do
-            curl -fsS http://localhost:11434/api/tags >/dev/null && break || sleep 1
-          done
-
-      - name: Restore Ollama model cache
-        id: ollama-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ollama/models
-          key: ollama-${{ env.OLLAMA_MODEL }}-v1
-
-      - name: Pull Ollama model
-        if: steps.ollama-cache.outputs.cache-hit != 'true'
-        run: ollama pull ${{ env.OLLAMA_MODEL }}
 
       # ---- Build + deploy ----
       - name: Build images
@@ -153,9 +148,13 @@ jobs:
 
           export TARGET_AGENTIC_URL=http://localhost:8080
           export TARGET_HPA_URL=http://localhost:8081
-          # ramp_duration plumbed through the *hold* phase only (up + down
-          # remain 5 min each, so a 25 m run is 5 + 15 + 5).
-          export RAMP_HOLD_DURATION="${RAMP_DURATION}"
+          # All three ramp phases are independently tunable now.
+          # ramp.js reads RAMP_UP_DURATION / RAMP_HOLD_DURATION /
+          # RAMP_DOWN_DURATION; defaults still reproduce the original
+          # 5m + 15m + 5m profile.
+          export RAMP_UP_DURATION
+          export RAMP_HOLD_DURATION
+          export RAMP_DOWN_DURATION
           k6 run k6/scenarios/ramp.js
 
       - name: Quantitative assertions (p99 + 5xx)
@@ -163,7 +162,7 @@ jobs:
         # exclude the noisy ramp-up/down windows from the latency and
         # error-rate comparison to keep the agentic-vs-HPA delta
         # apples-to-apples.
-        run: TOLERANCE="${TOLERANCE}" WINDOW="${RAMP_DURATION}" bash test/e2e/assertions.sh
+        run: TOLERANCE="${TOLERANCE}" WINDOW="${RAMP_HOLD_DURATION}" bash test/e2e/assertions.sh
 
       # ---- Failure artifacts ----
       - name: Collect failure artifacts

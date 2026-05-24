@@ -157,10 +157,15 @@ lint-yaml: kubeconform ## Run yamllint + kubeconform on cluster manifests.
 .PHONY: test
 test: test-go test-python ## Run Tier-1 tests (Go unit + Python unit/integration).
 
+# Tier-1 packages: pure unit tests, no envtest binary dependency.
+# Excludes internal/controller and internal/webhook (those run envtest
+# suites that need kube-apiserver/etcd binaries — covered by test-envtest).
+TEST_GO_PKGS = $$(go list ./internal/... ./api/... | grep -vE '/(controller|webhook)(/|$$)')
+
 .PHONY: test-go
 test-go: ## Run Go unit + adapter + classifier + explainer tests with coverage.
 	mkdir -p $(LOCALBIN)
-	go test ./internal/... ./api/... -count=1 -coverprofile=$(LOCALBIN)/coverage-controller.out
+	go test $(TEST_GO_PKGS) -count=1 -coverprofile=$(LOCALBIN)/coverage-controller.out
 	cd $(TARGET_APP) && go test ./... -count=1 -coverprofile=../bin/coverage-target.out
 
 .PHONY: test-python

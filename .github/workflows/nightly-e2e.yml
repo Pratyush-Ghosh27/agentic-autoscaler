@@ -21,9 +21,9 @@ on:
         required: false
         default: "1.25"
       ramp_duration:
-        description: "k6 ramp scenario duration"
+        description: "k6 ramp HOLD duration (full run = 5m up + HOLD + 5m down)"
         required: false
-        default: "25m"
+        default: "15m"
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ env:
   K6_VERSION: "v0.54.0"
   OLLAMA_MODEL: phi3
   TOLERANCE: ${{ inputs.tolerance || '1.25' }}
-  RAMP_DURATION: ${{ inputs.ramp_duration || '25m' }}
+  RAMP_DURATION: ${{ inputs.ramp_duration || '15m' }}
 
 jobs:
   e2e:
@@ -122,14 +122,48 @@ jobs:
           sleep 300
 
       # ---- Drive load + assert ----
+      #
+      # Two non-obvious wiring details, both validated the hard way by the
+      # 2026-05-24 first nightly run that produced 100% timeouts:
+      #
+      #   1. Service ClusterIPs (10.96.0.0/12) are NOT routable from the
+      #      GitHub Actions runner host — kind runs the cluster inside a
+      #      separate Docker network. Use `kubectl port-forward` to
+      #      project both Services onto the runner's localhost.
+      #
+      #   2. Do NOT pass `--duration` to `k6 run` here. In k6 ≥ 0.50,
+      #      a CLI `--duration` flag *replaces* the `scenarios:` block
+      #      defined in ramp.js with a single-VU default scenario,
+      #      silently turning a 200-RPS ramping-arrival-rate scenario
+      #      into a 1-VU sequential loop. The script's own stages drive
+      #      the duration; the workflow input `ramp_duration` is wired
+      #      via RAMP_HOLD_DURATION instead.
       - name: Run k6 ramp scenario
         run: |
-          export TARGET_AGENTIC_URL="http://$(kubectl get svc app-agentic -n demo -o jsonpath='{.spec.clusterIP}')"
-          export TARGET_HPA_URL="http://$(kubectl get svc app-hpa     -n demo -o jsonpath='{.spec.clusterIP}')"
-          k6 run k6/scenarios/ramp.js --duration "${RAMP_DURATION}"
+          kubectl port-forward -n demo svc/app-agentic 8080:80 >/dev/null 2>&1 &
+          PF_AGENTIC=$!
+          kubectl port-forward -n demo svc/app-hpa     8081:80 >/dev/null 2>&1 &
+          PF_HPA=$!
+          trap 'kill ${PF_AGENTIC} ${PF_HPA} 2>/dev/null || true' EXIT
+          sleep 5
+
+          echo "==> verifying both targets reachable from the runner..."
+          curl -fsS --max-time 5 http://localhost:8080/healthz
+          curl -fsS --max-time 5 http://localhost:8081/healthz
+
+          export TARGET_AGENTIC_URL=http://localhost:8080
+          export TARGET_HPA_URL=http://localhost:8081
+          # ramp_duration plumbed through the *hold* phase only (up + down
+          # remain 5 min each, so a 25 m run is 5 + 15 + 5).
+          export RAMP_HOLD_DURATION="${RAMP_DURATION}"
+          k6 run k6/scenarios/ramp.js
 
       - name: Quantitative assertions (p99 + 5xx)
-        run: TOLERANCE="${TOLERANCE}" bash test/e2e/assertions.sh
+        # WINDOW = the k6 *hold* phase (steady state) — we deliberately
+        # exclude the noisy ramp-up/down windows from the latency and
+        # error-rate comparison to keep the agentic-vs-HPA delta
+        # apples-to-apples.
+        run: TOLERANCE="${TOLERANCE}" WINDOW="${RAMP_DURATION}" bash test/e2e/assertions.sh
 
       # ---- Failure artifacts ----
       - name: Collect failure artifacts
@@ -138,9 +172,14 @@ jobs:
           mkdir -p artifacts
           kubectl logs -n agentic-autoscaler-system -l control-plane=controller-manager --tail=2000 > artifacts/controller-logs.txt || true
           kubectl logs -n agentic-system -l app=forecast-service --tail=1000 > artifacts/forecast-logs.txt || true
+          kubectl logs -n demo -l app=app-agentic --tail=500 > artifacts/target-agentic-logs.txt || true
+          kubectl logs -n demo -l app=app-hpa     --tail=500 > artifacts/target-hpa-logs.txt     || true
           kubectl get events -A --sort-by=.lastTimestamp > artifacts/events.txt || true
           kubectl get aas -A -o yaml > artifacts/aas.yaml || true
           kubectl get deploy -A -o wide > artifacts/deployments.txt || true
+          kubectl get pods -A -o wide > artifacts/pods.txt || true
+          kubectl describe deploy app-agentic -n demo > artifacts/describe-agentic.txt || true
+          kubectl describe deploy app-hpa     -n demo > artifacts/describe-hpa.txt     || true
 
       - uses: actions/upload-artifact@v4
         if: failure()

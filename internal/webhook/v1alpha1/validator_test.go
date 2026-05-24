@@ -52,3 +52,176 @@ func TestValidateSpec_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	_ = assert.NotNil // satisfy import for later tests
 }
+
+func TestValidateSpec_RejectsMinReplicasZero(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(0)
+
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minReplicas")
+}
+
+func TestValidateSpec_RejectsMinReplicasNegative(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(-1)
+
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "minReplicas")
+}
+
+func TestValidateSpec_RejectsMaxReplicasBelowMin(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(5)
+	cr.Spec.MaxReplicas = ptr32(3)
+
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maxReplicas")
+	assert.Contains(t, err.Error(), "minReplicas")
+}
+
+func TestValidateSpec_AcceptsMinEqualsMax(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(5)
+	cr.Spec.MaxReplicas = ptr32(5)
+
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err, "min == max is allowed (pinned replica count)")
+}
+
+func TestValidateSpec_RejectsRpsPerPodMinZero(t *testing.T) {
+	cr := validCR()
+	cr.Spec.RpsPerPodMin = ptr32(0)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rpsPerPodMin")
+}
+
+func TestValidateSpec_RejectsRpsPerPodMinAboveMax(t *testing.T) {
+	cr := validCR()
+	cr.Spec.RpsPerPodMin = ptr32(500)
+	cr.Spec.RpsPerPodMax = ptr32(500)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rpsPerPodMin")
+	assert.Contains(t, err.Error(), "rpsPerPodMax")
+}
+
+func TestValidateSpec_AcceptsRpsPerPodMinJustBelowMax(t *testing.T) {
+	cr := validCR()
+	cr.Spec.RpsPerPodMin = ptr32(499)
+	cr.Spec.RpsPerPodMax = ptr32(500)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err)
+}
+
+func TestValidateSpec_AcceptsMaxStepSizeNil(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MaxStepSize = nil
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err)
+}
+
+func TestValidateSpec_RejectsMaxStepSizeZero(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MaxStepSize = ptr32(0)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maxStepSize")
+}
+
+func TestValidateSpec_RejectsMaxStepSizeAboveRange(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(2)
+	cr.Spec.MaxReplicas = ptr32(5)
+	cr.Spec.MaxStepSize = ptr32(4) // 4 > (5 - 2)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maxStepSize")
+	assert.Contains(t, err.Error(), "maxReplicas - minReplicas")
+}
+
+func TestValidateSpec_AcceptsMaxStepSizeAtRange(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(2)
+	cr.Spec.MaxReplicas = ptr32(5)
+	cr.Spec.MaxStepSize = ptr32(3) // exactly (5 - 2)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err)
+}
+
+func TestValidateSpec_AcceptsCooldownsNil(t *testing.T) {
+	cr := validCR()
+	cr.Spec.ScaleUpCooldownSeconds = nil
+	cr.Spec.ScaleDownCooldownSeconds = nil
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err)
+}
+
+func TestValidateSpec_AcceptsCooldownsZero(t *testing.T) {
+	cr := validCR()
+	cr.Spec.ScaleUpCooldownSeconds = ptr32(0)
+	cr.Spec.ScaleDownCooldownSeconds = ptr32(0)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err)
+}
+
+func TestValidateSpec_RejectsNegativeScaleUpCooldown(t *testing.T) {
+	cr := validCR()
+	cr.Spec.ScaleUpCooldownSeconds = ptr32(-5)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scaleUpCooldownSeconds")
+}
+
+func TestValidateSpec_RejectsNegativeScaleDownCooldown(t *testing.T) {
+	cr := validCR()
+	cr.Spec.ScaleDownCooldownSeconds = ptr32(-1)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scaleDownCooldownSeconds")
+}
+
+func TestValidateSpec_AcceptsKnownForecasters(t *testing.T) {
+	for _, model := range []string{"prophet", "linear_extrap", "auto"} {
+		t.Run(model, func(t *testing.T) {
+			cr := validCR()
+			cr.Spec.PreferredForecaster = ptrStr(model)
+			err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateSpec_RejectsUnknownForecaster(t *testing.T) {
+	cr := validCR()
+	cr.Spec.PreferredForecaster = ptrStr("xgboost")
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "preferredForecaster")
+	assert.Contains(t, err.Error(), "xgboost")
+}
+
+func TestValidateSpec_AcceptsNilForecaster(t *testing.T) {
+	cr := validCR()
+	cr.Spec.PreferredForecaster = nil
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err)
+}
+
+func TestValidateSpec_AggregatesMultipleProblems(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(0)              // problem 1
+	cr.Spec.RpsPerPodMin = ptr32(600)
+	cr.Spec.RpsPerPodMax = ptr32(500)           // problem 2 (min >= max)
+	cr.Spec.PreferredForecaster = ptrStr("foo") // problem 3
+
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "minReplicas")
+	assert.Contains(t, msg, "rpsPerPod")
+	assert.Contains(t, msg, "preferredForecaster")
+}

@@ -28,7 +28,67 @@ import (
 func ValidateSpec(spec *autoscalingv1alpha1.AgenticAutoscalerSpec) error {
 	var problems []string
 
-	// Future tasks T3-T7 append rules below.
+	// Replica bounds — design §4.
+	if spec.MinReplicas != nil && *spec.MinReplicas < 1 {
+		problems = append(problems, fmt.Sprintf(
+			"minReplicas=%d must be >= 1", *spec.MinReplicas))
+	}
+	if spec.MinReplicas != nil && spec.MaxReplicas != nil &&
+		*spec.MaxReplicas < *spec.MinReplicas {
+		problems = append(problems, fmt.Sprintf(
+			"maxReplicas=%d must be >= minReplicas=%d",
+			*spec.MaxReplicas, *spec.MinReplicas))
+	}
+
+	// Capacity bounds — design §4.
+	if spec.RpsPerPodMin != nil && *spec.RpsPerPodMin < 1 {
+		problems = append(problems, fmt.Sprintf(
+			"rpsPerPodMin=%d must be >= 1", *spec.RpsPerPodMin))
+	}
+	if spec.RpsPerPodMin != nil && spec.RpsPerPodMax != nil &&
+		*spec.RpsPerPodMin >= *spec.RpsPerPodMax {
+		problems = append(problems, fmt.Sprintf(
+			"rpsPerPodMin=%d must be < rpsPerPodMax=%d",
+			*spec.RpsPerPodMin, *spec.RpsPerPodMax))
+	}
+
+	// maxStepSize bounds — design §4 (only when non-nil).
+	if spec.MaxStepSize != nil {
+		if *spec.MaxStepSize < 1 {
+			problems = append(problems, fmt.Sprintf(
+				"maxStepSize=%d must be >= 1", *spec.MaxStepSize))
+		}
+		if spec.MinReplicas != nil && spec.MaxReplicas != nil {
+			rangeSize := *spec.MaxReplicas - *spec.MinReplicas
+			if *spec.MaxStepSize > rangeSize {
+				problems = append(problems, fmt.Sprintf(
+					"maxStepSize=%d must be <= maxReplicas - minReplicas (=%d)",
+					*spec.MaxStepSize, rangeSize))
+			}
+		}
+	}
+
+	// Cooldowns — design §4 (only when non-nil; zero means "no cooldown").
+	if spec.ScaleUpCooldownSeconds != nil && *spec.ScaleUpCooldownSeconds < 0 {
+		problems = append(problems, fmt.Sprintf(
+			"scaleUpCooldownSeconds=%d must be >= 0", *spec.ScaleUpCooldownSeconds))
+	}
+	if spec.ScaleDownCooldownSeconds != nil && *spec.ScaleDownCooldownSeconds < 0 {
+		problems = append(problems, fmt.Sprintf(
+			"scaleDownCooldownSeconds=%d must be >= 0", *spec.ScaleDownCooldownSeconds))
+	}
+
+	// preferredForecaster — design §4 (only when non-nil).
+	if spec.PreferredForecaster != nil {
+		switch *spec.PreferredForecaster {
+		case "prophet", "linear_extrap", "auto":
+			// accepted
+		default:
+			problems = append(problems, fmt.Sprintf(
+				"preferredForecaster=%q must be one of prophet, linear_extrap, auto",
+				*spec.PreferredForecaster))
+		}
+	}
 
 	if len(problems) == 0 {
 		return nil

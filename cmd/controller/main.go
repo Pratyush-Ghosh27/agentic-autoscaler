@@ -37,7 +37,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	autoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/api/v1alpha1"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/forecast"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/prometheus"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/controller"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
 	webhookautoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -160,6 +164,25 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "AgenticAutoscaler")
 			os.Exit(1)
 		}
+	}
+
+	promClient := prometheus.New(cfg.PrometheusURL, cfg.ForecastTimeout)
+	forecastClient := forecast.New(cfg.ForecastServiceURL, cfg.ForecastTimeout)
+	explainCh := make(chan controller.ExplainRequest, 1)
+
+	reconciler := &controller.AgenticAutoscalerReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		EventRecorder: mgr.GetEventRecorderFor("agenticautoscaler-controller"),
+		Config:        &cfg,
+		PromQuerier:   promClient,
+		Forecaster:    forecastClient,
+		ExplainNotify: controller.ChannelNotifier{Ch: explainCh},
+		StateStore:    decision.NewStateStore(),
+	}
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AgenticAutoscaler")
+		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 

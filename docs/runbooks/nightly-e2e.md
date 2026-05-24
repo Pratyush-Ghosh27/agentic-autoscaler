@@ -18,7 +18,11 @@ regression alarm.
   (or via the GitHub Actions UI: *Actions → Nightly E2E → Run workflow*)
 
 The workflow input `tolerance` lets you re-run with a tighter or looser
-multiplier without editing the YAML.
+multiplier without editing the YAML. **Default is `1.10`** — the
+release-gate value, validated by 5 cross-scenario nightlies on
+`702116c6` (baseline / spiky / sustained / tight / loose), all green.
+Loosen to `1.25` only for runs on a hot CI runner where variance is
+expected to dominate.
 
 ## Run locally
 

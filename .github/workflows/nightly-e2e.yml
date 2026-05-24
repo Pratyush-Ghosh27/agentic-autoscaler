@@ -23,9 +23,9 @@ on:
   workflow_dispatch:
     inputs:
       tolerance:
-        description: "Tolerance multiplier for the agentic vs HPA comparison"
+        description: "Tolerance multiplier for the agentic vs HPA comparison (default 1.10 — release-gate strict)"
         required: false
-        default: "1.25"
+        default: "1.10"
       ramp_up_duration:
         description: "k6 ramp UP phase duration (default 5m)"
         required: false
@@ -48,7 +48,7 @@ env:
   KIND_VERSION: "v0.24.0"
   HELM_VERSION: "v3.16.0"
   K6_VERSION: "v0.54.0"
-  TOLERANCE: ${{ inputs.tolerance || '1.25' }}
+  TOLERANCE: ${{ inputs.tolerance || '1.10' }}
   RAMP_UP_DURATION:   ${{ inputs.ramp_up_duration   || '5m'  }}
   RAMP_HOLD_DURATION: ${{ inputs.ramp_hold_duration || '15m' }}
   RAMP_DOWN_DURATION: ${{ inputs.ramp_down_duration || '5m'  }}

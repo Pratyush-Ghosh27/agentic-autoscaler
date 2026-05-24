@@ -1,47 +1,104 @@
+# golangci-lint configuration pinned for reproducibility across releases.
+# Mirrors the controller and target-app modules' lint expectations so PR
+# CI is stable when golangci-lint upstream changes its default linter
+# set.
+#
+# Run locally with:
+#   make lint-go
+#
+# Reference: https://golangci-lint.run/usage/configuration/
+
 run:
   timeout: 5m
-  allow-parallel-runners: true
+  go: "1.23"
+  tests: true
 
-issues:
-  # don't skip warning about doc comments
-  # don't exclude the default set of lint
-  exclude-use-default: false
-  # restore some of the defaults
-  # (fill in the rest as needed)
-  exclude-rules:
-    - path: "api/*"
-      linters:
-        - lll
-    - path: "internal/*"
-      linters:
-        - dupl
-        - lll
 linters:
   disable-all: true
   enable:
-    - dupl
-    - errcheck
-    - exportloopref
-    - ginkgolinter
-    - goconst
-    - gocyclo
+    # ------------------------- correctness ------------------------------
+    - errcheck       # unchecked errors
+    - govet          # `go vet`
+    - ineffassign    # unused assignments
+    - staticcheck    # SA-series static analysis
+    - typecheck      # like the compiler, but lint-time
+    - unused         # unused symbols (was deadcode + structcheck + varcheck)
+    - copyloopvar    # loop variable captured by reference (replaces exportloopref)
+    # ------------------------- style ------------------------------------
     - gofmt
     - goimports
-    - gosimple
-    - govet
-    - ineffassign
-    - lll
     - misspell
-    - nakedret
-    - prealloc
-    - revive
-    - staticcheck
-    - typecheck
-    - unconvert
-    - unparam
-    - unused
+    - revive         # configurable replacement for golint
+    # ------------------------- bug-class --------------------------------
+    - bodyclose      # http.Response.Body must be closed
+    - errorlint      # %w / errors.Is / errors.As correctness
+    - nilerr         # `return nil` after a non-nil err
+    - rowserrcheck   # database/sql .Err() after Rows iteration
+    - sqlclosecheck  # *sql.Rows / *sql.Stmt closure
+    - unconvert      # redundant type conversions
+    # ------------------------- complexity / security --------------------
+    - gosec          # security smells
+    - prealloc       # slice preallocation hints
+    - unparam        # unused function params
 
 linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+  govet:
+    enable-all: true
+    disable:
+      # fieldalignment is noisy on small structs; it's a manual concern.
+      - fieldalignment
+  gosec:
+    excludes:
+      # G404: math/rand in synthetic-data generation is intentional —
+      # determinism beats cryptographic strength for fixtures.
+      - G404
   revive:
     rules:
-      - name: comment-spacings
+      - name: var-naming
+      - name: indent-error-flow
+      - name: unexported-return
+      - name: blank-imports
+      - name: context-as-argument
+      - name: error-return
+      - name: error-naming
+      - name: if-return
+      - name: increment-decrement
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: errorf
+
+issues:
+  exclude-dirs:
+    - bin
+    - dist
+    - .tools
+    - vendor
+    # The kubebuilder-scaffolded e2e suite uses ginkgo/gomega dot imports
+    # which golangci-lint's typecheck cannot resolve cleanly; the suite
+    # only runs against a real kind cluster (see `make test-e2e`).
+    - test/e2e
+  exclude-rules:
+    # Test files often dial into private internals; relax the strictest
+    # noise sources rather than disabling whole linters globally.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - unparam
+    # The kubebuilder-generated zz_generated_*.go files are out of our
+    # hands.
+    - path: zz_generated.*\.go
+      linters:
+        - errcheck
+        - gosec
+        - revive
+        - staticcheck
+        - unparam
+        - unused
+  max-issues-per-linter: 0
+  max-same-issues: 0

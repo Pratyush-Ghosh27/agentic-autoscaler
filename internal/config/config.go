@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -62,20 +63,35 @@ func envIntOrDefault(name string, def int32, errs *[]string) int32 {
 
 // envSecondsOrDefault reads a seconds-valued env var as a Duration.
 func envSecondsOrDefault(name string, def time.Duration, errs *[]string) time.Duration {
-	v := envIntOrDefault(name, int32(def/time.Second), errs)
+	v := envIntOrDefault(name, durationAsInt32(def, time.Second), errs)
 	return time.Duration(v) * time.Second
 }
 
 // envMinutesOrDefault reads a minutes-valued env var as a Duration.
 func envMinutesOrDefault(name string, def time.Duration, errs *[]string) time.Duration {
-	v := envIntOrDefault(name, int32(def/time.Minute), errs)
+	v := envIntOrDefault(name, durationAsInt32(def, time.Minute), errs)
 	return time.Duration(v) * time.Minute
 }
 
 // envHoursOrDefault reads an hours-valued env var as a Duration.
 func envHoursOrDefault(name string, def time.Duration, errs *[]string) time.Duration {
-	v := envIntOrDefault(name, int32(def/time.Hour), errs)
+	v := envIntOrDefault(name, durationAsInt32(def, time.Hour), errs)
 	return time.Duration(v) * time.Hour
+}
+
+// durationAsInt32 expresses a Duration in the given unit, clamped to the
+// signed-32-bit range. Default config values are well inside this range
+// (single-digit minutes / hours); the clamp exists purely so the conversion
+// is provably safe to gosec rather than a benign-but-flagged narrowing.
+func durationAsInt32(d, unit time.Duration) int32 {
+	v := int64(d / unit)
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }
 
 // envStringOrDefault returns the env var or def if unset.

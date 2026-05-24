@@ -100,8 +100,8 @@ func (c *Client) InstantQuery(ctx context.Context, query string) (float64, error
 	}
 
 	var out instantResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return 0, fmt.Errorf("decode prometheus response: %w", err)
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&out); decodeErr != nil {
+		return 0, fmt.Errorf("decode prometheus response: %w", decodeErr)
 	}
 	if out.Status != "success" {
 		return 0, fmt.Errorf("prometheus reported error: %s", out.Error)

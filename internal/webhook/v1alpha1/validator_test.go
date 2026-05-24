@@ -21,7 +21,7 @@ import (
 	webhookv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/internal/webhook/v1alpha1"
 )
 
-func ptr32(v int32) *int32  { return &v }
+func ptr32(v int32) *int32    { return &v }
 func ptrStr(s string) *string { return &s }
 
 // validCR returns a minimally valid AgenticAutoscaler for use as a base
@@ -213,7 +213,7 @@ func TestValidateSpec_AcceptsNilForecaster(t *testing.T) {
 
 func TestValidateSpec_AggregatesMultipleProblems(t *testing.T) {
 	cr := validCR()
-	cr.Spec.MinReplicas = ptr32(0)              // problem 1
+	cr.Spec.MinReplicas = ptr32(0) // problem 1
 	cr.Spec.RpsPerPodMin = ptr32(600)
 	cr.Spec.RpsPerPodMax = ptr32(500)           // problem 2 (min >= max)
 	cr.Spec.PreferredForecaster = ptrStr("foo") // problem 3

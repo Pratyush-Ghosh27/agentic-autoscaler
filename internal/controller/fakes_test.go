@@ -37,20 +37,6 @@ func (f *fakePromQuerier) RangeQuery(_ context.Context, _ string, _, _ time.Time
 	return f.rangeVal, f.rangeErr
 }
 
-func (f *fakePromQuerier) setInstant(v float64, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.instantVal = v
-	f.instantErr = err
-}
-
-func (f *fakePromQuerier) setRange(samples []prometheus.Sample, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rangeVal = samples
-	f.rangeErr = err
-}
-
 // fakeForecaster scripts a /recommend response. It records the last request
 // it observed so tests can assert on the wire-level "auto" → "" mapping
 // from the reconciler.
@@ -67,13 +53,6 @@ func (f *fakeForecaster) Recommend(_ context.Context, req forecast.RecommendRequ
 	r := req
 	f.lastReq = &r
 	return f.resp, f.err
-}
-
-func (f *fakeForecaster) setResponse(resp forecast.RecommendResponse, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.resp = resp
-	f.err = err
 }
 
 func (f *fakeForecaster) lastRequest() *forecast.RecommendRequest {

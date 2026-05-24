@@ -39,16 +39,16 @@ type Forecaster interface {
 type ExplainRequest struct {
 	Namespace             string
 	Name                  string
-	Reason                string  // reasoning token from internal/reasoning
+	Reason                string // reasoning token from internal/reasoning
 	CurrentReplicas       int32
-	RecommendedReplicas   int32   // pre-cap, pre-cooldown recommendation
-	TargetReplicas        int32   // post-cap (what was patched onto /scale)
+	RecommendedReplicas   int32 // pre-cap, pre-cooldown recommendation
+	TargetReplicas        int32 // post-cap (what was patched onto /scale)
 	CurrentRPS            float64
 	PredictedRPS          float64
-	HorizonMinutes        int     // forecast horizon
-	ModelUsed             string  // forecast model name
-	Pattern               string  // status.classifiedParams.pattern; "" if not yet classified
-	Confidence            string  // "high"/"medium"/"" (mirrors Pattern's nil semantics)
+	HorizonMinutes        int    // forecast horizon
+	ModelUsed             string // forecast model name
+	Pattern               string // status.classifiedParams.pattern; "" if not yet classified
+	Confidence            string // "high"/"medium"/"" (mirrors Pattern's nil semantics)
 	EffectiveCooldownUp   int32
 	EffectiveCooldownDown int32
 	EffectiveMaxStep      int32

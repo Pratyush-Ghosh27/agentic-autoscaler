@@ -40,3 +40,13 @@ secret.*
 
 # Workspace-local toolchain (kubebuilder, etc.)
 .tools/
+
+# Python
+forecast-service/.venv/
+forecast-service/.pytest_cache/
+forecast-service/.ruff_cache/
+forecast-service/.mypy_cache/
+forecast-service/**/__pycache__/
+forecast-service/**/*.egg-info/
+forecast-service/.coverage
+forecast-service/htmlcov/

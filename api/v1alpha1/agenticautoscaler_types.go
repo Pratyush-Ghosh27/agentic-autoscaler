@@ -182,6 +182,12 @@ type AgenticAutoscalerStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=aas;agentic
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Current",type=integer,JSONPath=`.status.currentReplicas`
+// +kubebuilder:printcolumn:name="Recommended",type=integer,JSONPath=`.status.recommendedReplicas`
+// +kubebuilder:printcolumn:name="Pattern",type=string,JSONPath=`.status.classifiedParams.pattern`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // AgenticAutoscaler is the Schema for the agenticautoscalers API.
 type AgenticAutoscaler struct {

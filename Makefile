@@ -294,6 +294,7 @@ deploy: ## Apply all application manifests (namespaces, controller, services, HP
 	$(KUBECTL) wait --for=condition=available deployment/agentic-autoscaler-controller-manager \
 	    -n agentic-autoscaler-system --timeout=180s
 	$(KUBECTL) apply -f deploy/manifests/forecast-service.yaml
+	$(KUBECTL) apply -f deploy/manifests/forecast-service-monitor.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-agentic.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-hpa.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-app-podmonitor.yaml
@@ -308,6 +309,7 @@ undeploy: ## Remove all application manifests.
 	-$(KUBECTL) delete -k deploy/grafana --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/hpa.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/target-app-podmonitor.yaml --ignore-not-found
+	-$(KUBECTL) delete -f deploy/manifests/forecast-service-monitor.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/target-hpa.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/target-agentic.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/forecast-service.yaml --ignore-not-found

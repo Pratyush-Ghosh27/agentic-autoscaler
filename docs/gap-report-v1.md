@@ -10,14 +10,17 @@ The PR CI is green and the nightly E2E ran end-to-end with `success` once. This
 report documents what *actually* works versus what the design promises, so v2
 planning starts from reality, not from "all green ⇒ all done".
 
-> **Status as of 2026-05-24** (branch `fix/gaps-v1.1`):
-> - ✅ G1, G2, G3, G4, G5, G7 — fixed.
+> **Status as of 2026-05-24** (released as v1.1.0, follow-up on `fix/v1.2-followup`):
+> - ✅ G1, G2, G3, G4, G5, G7 — fixed in v1.1.0.
 > - ✅ G8 (NEW) — target-app metric names didn't match the controller's
->   PromQL (`target_app_*` vs `http_*`); fixed in same PR.
+>   PromQL (`target_app_*` vs `http_*`); fixed in v1.1.0.
 > - ✅ G9 (NEW) — kube-prometheus-stack only consumes PodMonitor/ServiceMonitor
 >   CRDs, ignoring the `prometheus.io/scrape` annotations the target-app
->   was relying on. PodMonitor added in same PR.
-> - ⏳ G6 — left for after a few nightly runs with real data.
+>   was relying on. PodMonitor added in v1.1.0.
+> - ✅ §3 deferred items (forecast service Prometheus exporter via
+>   ServiceMonitor, cold-restart cooldown envtest, reclassify
+>   annotation envtest) — fixed on `fix/v1.2-followup`.
+> - ⏳ G6 — still left for after a few nightly runs with real data.
 
 > **Bottom line.** The hot path (forecast-driven reconcile + webhook + status)
 > is real and exercised. The cold path (pattern classification) is dead code
@@ -273,14 +276,25 @@ inputs and plumb to `RAMP_UP_DURATION` / `RAMP_DOWN_DURATION`.
 Items the design lists in scope but were never implemented; calling them out
 so they don't get rediscovered as "regressions":
 
-- **`forecast_prophet_failures_total` counter** (design §9 row 1). The
-  fallback works; the counter doesn't exist. Roll into G2.
+- **`forecast_prophet_failures_total` counter** (design §9 row 1).
+  ✅ **Resolved on `fix/v1.2-followup`.** The counter has actually
+  shipped since v1.0.0 (`forecast-service/src/forecast/metrics.py`)
+  and is incremented in `dispatch.py`; the missing piece was a
+  `ServiceMonitor` so kube-prom would scrape the existing `/metrics`
+  endpoint. Added at `deploy/manifests/forecast-service-monitor.yaml`.
 - **`status.lastScaleTime` cooldown seeding on restart** (design §5 step 5).
-  The reconciler reads it; needs an envtest that proves a cold restart
-  honours the cooldown rather than re-firing.
+  ✅ **Resolved on `fix/v1.2-followup`.** Two envtest specs under
+  `AgenticAutoscalerReconciler cold-restart cooldown` prove both
+  directions: a recent persisted `LastScaleTime` blocks a fresh
+  reconciler from scaling down (cold-restart safety), and an old
+  persisted value doesn't falsely gate legitimate scale-up.
 - **`autoscaling.agentic.io/reclassify` annotation removal** (design §6.1
-  trigger 3). Implemented in `classifier/worker.go` but never reachable today
-  because the worker isn't started (G1). Verify after G1 is fixed.
+  trigger 3). ✅ **Resolved on `fix/v1.2-followup`.** Two envtest
+  specs under `AgenticAutoscalerReconciler reclassify annotation`
+  prove the happy path (annotation removed when classification
+  succeeds, with `status.classifiedParams` populated as evidence)
+  and the failure path (annotation persists when classification
+  fails on insufficient history — operator request still outstanding).
 
 ---
 

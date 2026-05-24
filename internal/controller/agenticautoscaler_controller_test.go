@@ -26,6 +26,7 @@ import (
 	autoscalingv1alpha1 "github.com/pratyush-ghosh/agentic-autoscaler/api/v1alpha1"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/forecast"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/adapters/prometheus"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/classifier"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/controller"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
@@ -482,6 +483,257 @@ var _ = Describe("AgenticAutoscalerReconciler failure paths", func() {
 		res, err := reconcileFor(ctx, r, ns, cr)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.RequeueAfter).To(BeNumerically(">", time.Duration(0)))
+	})
+})
+
+// -----------------------------------------------------------------------
+// Cold-restart cooldown recovery — design §5 step 5.
+//
+// On controller pod restart, the in-memory StateStore is empty but the
+// CR's status still carries the last scale time from before the
+// restart. Without the persisted-status seed, every restart would
+// immediately allow another scale (because state.LastScaleUpTime is
+// the zero value, "much longer than the cooldown ago"). The reconciler
+// calls decision.InitializeFromStatus to seed both LastScaleUp and
+// LastScaleDown times from aas.Status.LastScaleTime; this spec proves
+// the wiring end-to-end through a real reconcile.
+// -----------------------------------------------------------------------
+var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
+	const ns = "rec-coldstart"
+	ctx := context.Background()
+
+	BeforeEach(func() { ensureNamespace(ctx, ns) })
+
+	It("honours scale-down cooldown after a cold restart (status-seeded)", func() {
+		const dep = "cold-down-deploy"
+		const cr = "cold-down-cr"
+		// 4 replicas — overprovisioned relative to the about-to-arrive
+		// forecast, so the *unguarded* path would scale down to
+		// minReplicas=2 immediately.
+		makeDeployment(ctx, ns, dep, 4)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// Persist a "we just scaled 30 s ago" status. The default scale-down
+		// cooldown from testConfig is 300 s, so 30 s < 300 s ⇒ gated.
+		got := fetch(ctx, ns, cr)
+		t := metav1.NewTime(fixedNow.Add(-30 * time.Second))
+		got.Status.LastScaleTime = &t
+		got.Status.CurrentReplicas = 4
+		got.Status.RpsPerPodCurrent = 275
+		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
+
+		// Predict near-zero RPS so the unguarded recommendation collapses
+		// to minReplicas. instantVal also low so the rps_per_pod ring isn't
+		// dragged toward an unrealistic value.
+		prom := &fakePromQuerier{instantVal: 50, rangeVal: rangeSamples(20, 50)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 50, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		// Brand-new reconciler ⇒ brand-new (empty) StateStore. This is
+		// the "cold restart" — the only thing protecting the deployment
+		// from an immediate scale-down is the persisted LastScaleTime.
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The Deployment must NOT have been touched.
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(4)),
+			"cold-restart cooldown should have blocked the scale-down")
+
+		// CurrentReplicas in status reflects what we actually have now,
+		// which is still 4 — the cooldown gate set Target=Current.
+		Expect(fetch(ctx, ns, cr).Status.CurrentReplicas).To(Equal(int32(4)))
+
+		// And the controller should have surfaced the cooldown event.
+		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("cooldown_holding_down")))
+	})
+
+	It("permits scale-up when the persisted LastScaleTime is older than the up-cooldown", func() {
+		const dep = "cold-up-deploy"
+		const cr = "cold-up-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// LastScaleTime 10 minutes ago — well past the 60 s up-cooldown.
+		// This is the "cold restart, status carries an old timestamp"
+		// case: the seed must NOT cause a false cooldown gate.
+		got := fetch(ctx, ns, cr)
+		t := metav1.NewTime(fixedNow.Add(-10 * time.Minute))
+		got.Status.LastScaleTime = &t
+		got.Status.CurrentReplicas = 2
+		got.Status.RpsPerPodCurrent = 275
+		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
+
+		// On the first reconcile the rps_per_pod ring buffer hasn't been
+		// seeded yet, so the steady-state gate fires and pushes its first
+		// observation = currentRPS / currentReplicas = 500 / 2 = 250.
+		// recommended = ceil(predictedRPS / rps_per_pod) = ceil(1100 / 250) = 5.
+		// Step cap MaxStep=4 doesn't bind (|5-2|=3 ≤ 4), so target=5.
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1100, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(5)),
+			"old LastScaleTime must not falsely gate fresh scale-up decisions")
+		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("scale_up")))
+	})
+})
+
+// -----------------------------------------------------------------------
+// Reclassify annotation end-to-end — design §6.1 trigger 3.
+//
+// The cold-path classifier is wired in production via the
+// reconciler -> classifier.Manager -> Worker chain (G1). This spec
+// proves the full reclassify flow in envtest: an operator sets
+// `autoscaling.agentic.io/reclassify=true` on a CR; the reconciler
+// signals the manager; the worker classifies; the worker strips the
+// annotation. Before G1, the worker was never started, so the
+// annotation accumulated on every CR for which an operator pressed
+// the button — the controller silently ignored it.
+// -----------------------------------------------------------------------
+var _ = Describe("AgenticAutoscalerReconciler reclassify annotation", func() {
+	const ns = "rec-reclassify"
+	ctx := context.Background()
+
+	BeforeEach(func() { ensureNamespace(ctx, ns) })
+
+	It("strips the reclassify annotation after a successful classification", func() {
+		const dep = "reclass-deploy"
+		const cr = "reclass-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep, func(a *autoscalingv1alpha1.AgenticAutoscaler) {
+			a.Annotations = map[string]string{
+				"autoscaling.agentic.io/reclassify": "true",
+			}
+		})
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// Long-lived context for the worker goroutine. Cancelled at the
+		// end of the spec so the goroutine doesn't leak into the next
+		// test in the suite.
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		DeferCleanup(cancelWorker)
+
+		// 80 samples ≥ MinPoints (70). All flat — the pipeline classifies
+		// as `flat`, which is a *successful* classification (the annotation
+		// removal path requires success, not a specific pattern).
+		prom := &fakePromQuerier{
+			instantVal: 100,
+			rangeVal:   rangeSamples(80, 100),
+		}
+		mgr := classifier.NewManager(
+			workerCtx,
+			k8sClient,
+			prom,
+			&record.FakeRecorder{Events: make(chan string, 32)},
+			classifier.WorkerConfig{
+				// Long enough that the timer never fires during this spec
+				// — we exercise reclassify, not the periodic path.
+				Interval:       time.Hour,
+				HistoryHours:   24 * time.Hour,
+				MinPoints:      70,
+				HighConfPoints: 240,
+				DedupSeconds:   1,
+			},
+		)
+
+		fetched := fetch(ctx, ns, cr)
+		mgr.Ensure(fetched)
+
+		// Push the reclassify trigger. Drop-and-replace; the worker
+		// picks it up on its next select and runs runClassification,
+		// which calls removeReclassifyAnnotation on success.
+		mgr.SignalReclassify(types.NamespacedName{Namespace: ns, Name: cr})
+
+		// Eventually the annotation should be gone from the live CR.
+		// Long timeout because the worker's first thing is the immediate
+		// initial run, then it loops; on slow CI workers this can take
+		// a couple of seconds.
+		Eventually(func() bool {
+			got := fetch(ctx, ns, cr)
+			_, present := got.Annotations["autoscaling.agentic.io/reclassify"]
+			return !present
+		}, "10s", "100ms").Should(BeTrue(),
+			"reclassify annotation must be removed after the worker classifies")
+
+		// And status.classifiedParams must be populated — proving the
+		// classification *actually ran* rather than the annotation being
+		// stripped by some other code path.
+		Eventually(func() *autoscalingv1alpha1.ClassifiedParams {
+			return fetch(ctx, ns, cr).Status.ClassifiedParams
+		}, "10s", "100ms").ShouldNot(BeNil(),
+			"status.classifiedParams must be populated by the worker run")
+	})
+
+	It("does not strip the annotation when classification fails on insufficient history", func() {
+		const dep = "reclass-fail-deploy"
+		const cr = "reclass-fail-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep, func(a *autoscalingv1alpha1.AgenticAutoscaler) {
+			a.Annotations = map[string]string{
+				"autoscaling.agentic.io/reclassify": "true",
+			}
+		})
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		DeferCleanup(cancelWorker)
+
+		// Only 5 samples — well below MinPoints=70. RunPipeline will
+		// return an "insufficient history" error and the worker will
+		// emit pattern_unknown without stripping the annotation.
+		prom := &fakePromQuerier{
+			instantVal: 100,
+			rangeVal:   rangeSamples(5, 100),
+		}
+		mgr := classifier.NewManager(
+			workerCtx,
+			k8sClient,
+			prom,
+			&record.FakeRecorder{Events: make(chan string, 32)},
+			classifier.WorkerConfig{
+				Interval:       time.Hour,
+				HistoryHours:   24 * time.Hour,
+				MinPoints:      70,
+				HighConfPoints: 240,
+				DedupSeconds:   1,
+			},
+		)
+
+		fetched := fetch(ctx, ns, cr)
+		mgr.Ensure(fetched)
+		mgr.SignalReclassify(types.NamespacedName{Namespace: ns, Name: cr})
+
+		// Annotation must persist — the operator's request hasn't been
+		// satisfied yet. Consistently across repeated polls, not just
+		// "eventually true" (which a removal would also satisfy).
+		Consistently(func() bool {
+			got := fetch(ctx, ns, cr)
+			_, present := got.Annotations["autoscaling.agentic.io/reclassify"]
+			return present
+		}, "1500ms", "100ms").Should(BeTrue(),
+			"failed classification must NOT strip the annotation; the operator's "+
+				"reclassify request is still outstanding")
 	})
 })
 

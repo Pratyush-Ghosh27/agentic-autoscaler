@@ -1,0 +1,29 @@
+---
+# ServiceMonitor that points kube-prometheus-stack at the forecast
+# service's existing /metrics endpoint. The endpoint and the
+# `forecast_prophet_failures_total` counter have shipped since v1.0.0
+# (see forecast-service/src/forecast/{app,metrics,dispatch}.py), but
+# without this the metric was never scraped — it lived in process memory
+# and disappeared when the pod was rescheduled.
+#
+# kube-prom's selectors are opened cluster-wide by
+# deploy/helm/prometheus-values.yaml, so this monitor in the
+# agentic-system namespace is picked up without any additional labels.
+#
+# See docs/gap-report-v1.md §3 — "deferred from design but doesn't
+# block v1" item 1.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: forecast-service
+  namespace: agentic-system
+  labels:
+    app: forecast-service
+spec:
+  selector:
+    matchLabels:
+      app: forecast-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

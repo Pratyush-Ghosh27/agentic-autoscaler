@@ -64,6 +64,11 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        # IfNotPresent so kind/dev clusters use the locally-loaded image
+        # rather than trying to pull `:latest` from a registry that
+        # doesn't exist. In production, override IMG to a registry-tagged
+        # immutable digest and policy becomes a non-issue.
+        imagePullPolicy: IfNotPresent
         name: manager
         securityContext:
           allowPrivilegeEscalation: false

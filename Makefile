@@ -33,7 +33,12 @@ TARGET_APP   := $(ROOT_DIR)/target-app
 LOCALBIN     ?= $(ROOT_DIR)/bin
 
 # ----- Image tags -------------------------------------------------------
-IMG_TAG          ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
+# Default to `:latest` so the in-tree manifests (which all reference
+# `<image>:latest` with imagePullPolicy: IfNotPresent) match the locally
+# built and `kind load`-ed images without any per-build kustomize edits.
+# For registry-pushed images, override at the make invocation:
+#   make images IMG_TAG=v0.1.0 CONTROLLER_IMG=ghcr.io/me/controller:v0.1.0
+IMG_TAG          ?= latest
 CONTROLLER_IMG   ?= controller:$(IMG_TAG)
 FORECAST_IMG     ?= forecast-service:$(IMG_TAG)
 TARGET_APP_IMG   ?= target-app:$(IMG_TAG)

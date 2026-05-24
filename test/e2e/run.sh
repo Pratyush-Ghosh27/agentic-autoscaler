@@ -20,7 +20,8 @@ TOLERANCE="${TOLERANCE:-1.10}"
 RAMP_DURATION="${RAMP_DURATION:-25m}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-300}"
 CLUSTER_NAME="${CLUSTER_NAME:-agentic-e2e-$$}"
-IMG_TAG="${IMG_TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
+# Default to `latest`; see comment in test/smoke/run.sh for rationale.
+IMG_TAG="${IMG_TAG:-latest}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 

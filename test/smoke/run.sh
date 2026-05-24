@@ -15,7 +15,10 @@
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-agentic-smoke-$$}"
-IMG_TAG="${IMG_TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
+# Default to `latest` so the in-tree manifests (which all reference
+# `<image>:latest`) match what we build + load. Override at invocation if
+# you need version traceability:  IMG_TAG=v0.1.0 make smoke
+IMG_TAG="${IMG_TAG:-latest}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 
 cleanup() {

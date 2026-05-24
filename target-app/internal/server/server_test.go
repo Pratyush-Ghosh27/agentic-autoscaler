@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,4 +54,30 @@ func TestReadyz_RecoversToReady(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestMetrics_ExposesHistogramAndCounter(t *testing.T) {
+	srv := server.New(server.DefaultConfig())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "target_app_request_duration_seconds")
+	assert.Contains(t, body, "target_app_requests_total")
+	assert.True(t, strings.Contains(body, "# TYPE target_app_request_duration_seconds histogram"))
+	assert.True(t, strings.Contains(body, "# TYPE target_app_requests_total counter"))
+}
+
+func TestMetrics_HistogramBucketsCover1msTo10s(t *testing.T) {
+	srv := server.New(server.DefaultConfig())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	assert.Contains(t, body, `le="0.001"`)
+	assert.Contains(t, body, `le="10"`)
 }

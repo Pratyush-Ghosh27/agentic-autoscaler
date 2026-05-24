@@ -485,4 +485,107 @@ var _ = Describe("AgenticAutoscalerReconciler failure paths", func() {
 	})
 })
 
+// -----------------------------------------------------------------------
+// Cold-restart cooldown recovery — design §5 step 5.
+//
+// On controller pod restart, the in-memory StateStore is empty but the
+// CR's status still carries the last scale time from before the
+// restart. Without the persisted-status seed, every restart would
+// immediately allow another scale (because state.LastScaleUpTime is
+// the zero value, "much longer than the cooldown ago"). The reconciler
+// calls decision.InitializeFromStatus to seed both LastScaleUp and
+// LastScaleDown times from aas.Status.LastScaleTime; this spec proves
+// the wiring end-to-end through a real reconcile.
+// -----------------------------------------------------------------------
+var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
+	const ns = "rec-coldstart"
+	ctx := context.Background()
+
+	BeforeEach(func() { ensureNamespace(ctx, ns) })
+
+	It("honours scale-down cooldown after a cold restart (status-seeded)", func() {
+		const dep = "cold-down-deploy"
+		const cr = "cold-down-cr"
+		// 4 replicas — overprovisioned relative to the about-to-arrive
+		// forecast, so the *unguarded* path would scale down to
+		// minReplicas=2 immediately.
+		makeDeployment(ctx, ns, dep, 4)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// Persist a "we just scaled 30 s ago" status. The default scale-down
+		// cooldown from testConfig is 300 s, so 30 s < 300 s ⇒ gated.
+		got := fetch(ctx, ns, cr)
+		t := metav1.NewTime(fixedNow.Add(-30 * time.Second))
+		got.Status.LastScaleTime = &t
+		got.Status.CurrentReplicas = 4
+		got.Status.RpsPerPodCurrent = 275
+		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
+
+		// Predict near-zero RPS so the unguarded recommendation collapses
+		// to minReplicas. instantVal also low so the rps_per_pod ring isn't
+		// dragged toward an unrealistic value.
+		prom := &fakePromQuerier{instantVal: 50, rangeVal: rangeSamples(20, 50)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 50, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		// Brand-new reconciler ⇒ brand-new (empty) StateStore. This is
+		// the "cold restart" — the only thing protecting the deployment
+		// from an immediate scale-down is the persisted LastScaleTime.
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		// The Deployment must NOT have been touched.
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(4)),
+			"cold-restart cooldown should have blocked the scale-down")
+
+		// CurrentReplicas in status reflects what we actually have now,
+		// which is still 4 — the cooldown gate set Target=Current.
+		Expect(fetch(ctx, ns, cr).Status.CurrentReplicas).To(Equal(int32(4)))
+
+		// And the controller should have surfaced the cooldown event.
+		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("cooldown_holding_down")))
+	})
+
+	It("permits scale-up when the persisted LastScaleTime is older than the up-cooldown", func() {
+		const dep = "cold-up-deploy"
+		const cr = "cold-up-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// LastScaleTime 10 minutes ago — well past the 60 s up-cooldown.
+		// This is the "cold restart, status carries an old timestamp"
+		// case: the seed must NOT cause a false cooldown gate.
+		got := fetch(ctx, ns, cr)
+		t := metav1.NewTime(fixedNow.Add(-10 * time.Minute))
+		got.Status.LastScaleTime = &t
+		got.Status.CurrentReplicas = 2
+		got.Status.RpsPerPodCurrent = 275
+		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
+
+		// Forecast wants 4 replicas (1100 / 275 ≈ 4).
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1100, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(4)),
+			"old LastScaleTime must not falsely gate fresh scale-up decisions")
+		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("scale_up")))
+	})
+})
+
 func ptrInt32(v int32) *int32 { return &v }

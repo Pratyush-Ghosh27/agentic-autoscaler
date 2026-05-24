@@ -1,0 +1,39 @@
+# Synthetic Fixture Schema
+
+Each `.json` file is an array of `DataPoint` objects:
+
+```json
+[
+  {"timestamp_unix": 1716504000, "rps": 120.5},
+  {"timestamp_unix": 1716504060, "rps": 118.2}
+]
+```
+
+Fields:
+
+- `timestamp_unix`: integer epoch seconds, 60s apart (1-min resolution).
+- `rps`: float64, non-negative.
+
+Filename convention: `<pattern>_<point_count>.json`.
+
+## Regenerate
+
+```sh
+go run ./hack/synthetic --output=testdata --seed=42
+```
+
+Deterministic — same seed produces the same output. Commit the outputs so
+both the Go classifier tests and the Python forecast service tests can
+load them as golden inputs.
+
+## Patterns
+
+| File | Generator | Target features |
+| --- | --- | --- |
+| `flat_1440.json` | `GenFlat` | `cv < 0.10` |
+| `periodic_1440.json` | `GenPeriodic` | `tod_correlation > 0.70` |
+| `spiky_1440.json` | `GenSpiky` | `cv > 0.50` AND `peak_to_trough > 5` |
+| `gradual_ramp_1440.json` | `GenRamp` | `\|trend_slope\| > 2.0 rps/min` |
+| `default_1440.json` | `GenDefault` | none of the above triggers |
+| `flat_70.json` | `GenFlat` | minimum-confidence boundary (70 points) |
+| `insufficient_50.json` | `GenFlat` | below `CLASSIFIER_MIN_POINTS` |

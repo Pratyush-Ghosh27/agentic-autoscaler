@@ -128,10 +128,56 @@ type ClassifiedParams struct {
 	Confidence string `json:"confidence"`
 }
 
-// AgenticAutoscalerStatus defines the observed state of AgenticAutoscaler.
+// AgenticAutoscalerPhase reflects the controller's high-level state.
+// +kubebuilder:validation:Enum=Ready;Disabled;Conflict
+type AgenticAutoscalerPhase string
+
+const (
+	// PhaseReady indicates normal reconciliation.
+	PhaseReady AgenticAutoscalerPhase = "Ready"
+	// PhaseDisabled indicates the kill-switch annotation is engaged.
+	PhaseDisabled AgenticAutoscalerPhase = "Disabled"
+	// PhaseConflict indicates an HPA is also targeting this Deployment.
+	PhaseConflict AgenticAutoscalerPhase = "Conflict"
+)
+
+// AgenticAutoscalerStatus reports the controller's observed state.
+// See docs/design.md §4.
 type AgenticAutoscalerStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Phase is the high-level controller state.
+	// +optional
+	Phase AgenticAutoscalerPhase `json:"phase,omitempty"`
+
+	// ConflictReason is populated only when Phase=Conflict.
+	// +optional
+	ConflictReason string `json:"conflictReason,omitempty"`
+
+	// CurrentReplicas is the live replica count of the target Deployment.
+	// +optional
+	CurrentReplicas int32 `json:"currentReplicas,omitempty"`
+
+	// RecommendedReplicas is the pre-cap, pre-cooldown replica recommendation.
+	// See docs/design.md §5 step 5.
+	// +optional
+	RecommendedReplicas int32 `json:"recommendedReplicas,omitempty"`
+
+	// PredictedRPS is the most recent forecast.
+	// +optional
+	PredictedRPS int32 `json:"predictedRPS,omitempty"`
+
+	// RpsPerPodCurrent is the live sliding-window median rps_per_pod.
+	// Persisted for restart recovery (see docs/design.md §5).
+	// +optional
+	RpsPerPodCurrent int32 `json:"rpsPerPodCurrent,omitempty"`
+
+	// LastScaleTime is the most recent scale event in either direction:
+	// max(lastScaleUpTime, lastScaleDownTime).
+	// +optional
+	LastScaleTime *metav1.Time `json:"lastScaleTime,omitempty"`
+
+	// ClassifiedParams is the classifier's most recent recommendation.
+	// +optional
+	ClassifiedParams *ClassifiedParams `json:"classifiedParams,omitempty"`
 }
 
 // +kubebuilder:object:root=true

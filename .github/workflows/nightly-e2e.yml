@@ -1,0 +1,153 @@
+# ---------------------------------------------------------------------
+# Nightly quantitative E2E.
+#
+# Runs the full agentic vs HPA comparison on a kind cluster with an
+# Ollama instance for explanations. Caches the model weights so we don't
+# pay the pull cost every night.
+#
+# Failure here does *not* block PRs — it's a regression alarm; commits
+# that introduce SLO regressions land green, and the next nightly run
+# reports the regression with full controller/forecast logs uploaded.
+# ---------------------------------------------------------------------
+name: Nightly E2E
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      tolerance:
+        description: "Tolerance multiplier for the agentic vs HPA comparison"
+        required: false
+        default: "1.25"
+      ramp_duration:
+        description: "k6 ramp scenario duration"
+        required: false
+        default: "25m"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.23"
+  PYTHON_VERSION: "3.12"
+  KIND_VERSION: "v0.24.0"
+  HELM_VERSION: "v3.16.0"
+  K6_VERSION: "v0.54.0"
+  OLLAMA_MODEL: phi3
+  TOLERANCE: ${{ inputs.tolerance || '1.25' }}
+  RAMP_DURATION: ${{ inputs.ramp_duration || '25m' }}
+
+jobs:
+  e2e:
+    name: kind + helm + ollama + k6 + Prometheus assertions
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install kind
+        run: |
+          curl -fsSLo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind && sudo mv ./kind /usr/local/bin/
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install k6
+        run: |
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
+            | tar xz --strip-components=1 -C /tmp
+          sudo mv /tmp/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      # ---- Ollama (cached weights) ----
+      - name: Install Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for _ in $(seq 1 30); do
+            curl -fsS http://localhost:11434/api/tags >/dev/null && break || sleep 1
+          done
+
+      - name: Restore Ollama model cache
+        id: ollama-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ env.OLLAMA_MODEL }}-v1
+
+      - name: Pull Ollama model
+        if: steps.ollama-cache.outputs.cache-hit != 'true'
+        run: ollama pull ${{ env.OLLAMA_MODEL }}
+
+      # ---- Build + deploy ----
+      - name: Build images
+        run: make images
+
+      - name: Create kind cluster + load images
+        run: |
+          make kind-up
+          make kind-load
+
+      - name: Install Helm dependencies
+        run: make install-deps
+
+      - name: Deploy application stack
+        run: make deploy
+
+      - name: Wait for steady state
+        run: |
+          kubectl wait --for=condition=available deployment \
+            -l control-plane=controller-manager -n agentic-system --timeout=180s
+          kubectl wait --for=condition=available deployment/forecast-service \
+            -n agentic-system --timeout=300s
+          kubectl wait --for=condition=available deployment/app-agentic -n demo --timeout=120s
+          kubectl wait --for=condition=available deployment/app-hpa     -n demo --timeout=120s
+          echo "Sleeping 5m for classifier first-run + reconciler steady state..."
+          sleep 300
+
+      # ---- Drive load + assert ----
+      - name: Run k6 ramp scenario
+        run: |
+          export TARGET_AGENTIC_URL="http://$(kubectl get svc app-agentic -n demo -o jsonpath='{.spec.clusterIP}')"
+          export TARGET_HPA_URL="http://$(kubectl get svc app-hpa     -n demo -o jsonpath='{.spec.clusterIP}')"
+          k6 run k6/scenarios/ramp.js --duration "${RAMP_DURATION}"
+
+      - name: Quantitative assertions (p99 + 5xx)
+        run: TOLERANCE="${TOLERANCE}" bash test/e2e/assertions.sh
+
+      # ---- Failure artifacts ----
+      - name: Collect failure artifacts
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          kubectl logs -n agentic-system -l control-plane=controller-manager --tail=2000 > artifacts/controller-logs.txt || true
+          kubectl logs -n agentic-system -l app=forecast-service --tail=1000 > artifacts/forecast-logs.txt || true
+          kubectl get events -A --sort-by=.lastTimestamp > artifacts/events.txt || true
+          kubectl get aas -A -o yaml > artifacts/aas.yaml || true
+          kubectl get deploy -A -o wide > artifacts/deployments.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: nightly-e2e-failure-artifacts
+          path: artifacts/
+
+      - name: Cleanup
+        if: always()
+        run: kind delete cluster --name agentic 2>/dev/null || true

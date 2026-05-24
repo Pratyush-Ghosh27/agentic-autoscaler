@@ -43,13 +43,19 @@ help: ## Display this help.
 
 ##@ Development
 
+# CONTROLLER_GEN_PATHS scopes the generator to project source trees; never
+# include "./..." here because GOMODCACHE may live inside the workspace
+# (.tools/gopath) and the wildcard would walk the cache and fail to resolve
+# transitive go.mod entries.
+CONTROLLER_GEN_PATHS ?= "./api/...;./internal/..."
+
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths=$(CONTROLLER_GEN_PATHS) output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
+	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths=$(CONTROLLER_GEN_PATHS)
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.

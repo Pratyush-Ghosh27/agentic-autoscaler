@@ -1,0 +1,27 @@
+# permissions for end users to edit agenticautoscalers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: agentic-autoscaler
+    app.kubernetes.io/managed-by: kustomize
+  name: agenticautoscaler-editor-role
+rules:
+- apiGroups:
+  - autoscaling.agentic.io
+  resources:
+  - agenticautoscalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling.agentic.io
+  resources:
+  - agenticautoscalers/status
+  verbs:
+  - get

@@ -1,0 +1,23 @@
+# permissions for end users to view agenticautoscalers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: agentic-autoscaler
+    app.kubernetes.io/managed-by: kustomize
+  name: agenticautoscaler-viewer-role
+rules:
+- apiGroups:
+  - autoscaling.agentic.io
+  resources:
+  - agenticautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - autoscaling.agentic.io
+  resources:
+  - agenticautoscalers/status
+  verbs:
+  - get

@@ -1,0 +1,13 @@
+---
+# 'demo' holds the workload the autoscalers manage (app-agentic + app-hpa).
+# 'agentic-system' holds the controller, webhook, and forecast-service.
+# Keeping them separate makes RBAC + NetworkPolicy obvious later.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentic-system

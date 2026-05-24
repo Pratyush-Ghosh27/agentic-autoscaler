@@ -1,0 +1,24 @@
+---
+# Sample AgenticAutoscaler CR managing app-agentic. All scaling-behaviour
+# fields are intentionally left unset so the controller exercises the
+# defer-to-classifier path; the operator can override any field at any
+# time without restarting the controller.
+#
+# The kill-switch annotation is "false" by default — flip to "true" to
+# pause reconciliation immediately (status.phase becomes Disabled).
+apiVersion: autoscaling.agentic.io/v1alpha1
+kind: AgenticAutoscaler
+metadata:
+  name: app-agentic
+  namespace: demo
+  annotations:
+    autoscaling.agentic.io/kill-switch: "false"
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: app-agentic
+  minReplicas: 2
+  maxReplicas: 10
+  rpsPerPodMin: 50
+  rpsPerPodMax: 500

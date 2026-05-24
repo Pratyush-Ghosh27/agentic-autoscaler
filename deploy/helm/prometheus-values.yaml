@@ -1,0 +1,37 @@
+---
+# kube-prometheus-stack values tuned for a single-developer kind cluster.
+# Heavy components disabled so the stack fits in ~1.5 GB. Production values
+# (alertmanager + node-exporter + persistence) are out of scope for this
+# project — the goal is reproducible local + CI runs, not a fleet rollout.
+
+alertmanager:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: false
+
+nodeExporter:
+  enabled: false
+
+grafana:
+  enabled: true
+  # The sidecar watches for ConfigMaps with this label and auto-imports
+  # any *.json file under data[*]. Paired with deploy/grafana/dashboard-configmap.yaml.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+  persistence:
+    enabled: false
+  adminPassword: admin
+
+prometheus:
+  prometheusSpec:
+    retention: 2h
+    resources:
+      requests:
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    storageSpec: {}

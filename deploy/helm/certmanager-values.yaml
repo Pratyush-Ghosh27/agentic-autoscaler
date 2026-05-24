@@ -1,0 +1,11 @@
+---
+# cert-manager Helm values. The webhook (Plan #2) uses cert-manager to issue
+# its serving cert, so installCRDs must be true on first install.
+
+installCRDs: true
+
+resources:
+  requests:
+    memory: 64Mi
+  limits:
+    memory: 256Mi

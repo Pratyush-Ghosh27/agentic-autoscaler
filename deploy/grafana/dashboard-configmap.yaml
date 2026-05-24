@@ -1,0 +1,27 @@
+---
+# Hand-maintained alternative for clusters without kustomize.
+#
+# Prefer:    kubectl apply -k deploy/grafana/
+#
+# Regenerate this file with:
+#   kubectl create configmap agentic-dashboard \
+#     --namespace monitoring \
+#     --from-file=agentic-dashboard.json=deploy/grafana/agentic-dashboard.json \
+#     --dry-run=client -o yaml > deploy/grafana/dashboard-configmap.yaml
+#
+# Then re-add the labels block below — `kubectl create configmap` does not
+# emit labels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agentic-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: agentic-autoscaler
+data:
+  # The dashboard JSON is loaded from deploy/grafana/agentic-dashboard.json
+  # at apply time. The smoke test (test/smoke/manifests_test.go) verifies
+  # the file is valid JSON with exactly 7 panels.
+  agentic-dashboard.json: ""

@@ -1,0 +1,26 @@
+---
+# Apply via:  kubectl apply -k deploy/grafana/
+#
+# Kustomize's configMapGenerator embeds agentic-dashboard.json inline as
+# the ConfigMap's data field, eliminating the manual-sync trap of
+# hand-maintaining a YAML copy of the JSON.
+#
+# The kube-prometheus-stack Grafana sidecar (configured in
+# deploy/helm/prometheus-values.yaml) watches the monitoring namespace for
+# ConfigMaps with label grafana_dashboard=1 and auto-imports the JSON.
+# Hence: this kustomization MUST land in 'monitoring'.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: agentic-autoscaler
+
+configMapGenerator:
+  - name: agentic-dashboard
+    files:
+      - agentic-dashboard.json

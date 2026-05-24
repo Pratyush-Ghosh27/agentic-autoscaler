@@ -265,7 +265,7 @@ kind-load: ## Load all built images into the kind cluster.
 	$(KIND) load docker-image $(TARGET_APP_IMG) --name agentic
 
 .PHONY: install-deps
-install-deps: ## Helm-install kube-prometheus-stack + cert-manager (CI-friendly values).
+install-deps: ## Helm-install cert-manager + kube-prometheus-stack + prometheus-adapter.
 	$(HELM) repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
 	$(HELM) repo add jetstack https://charts.jetstack.io || true
 	$(HELM) repo update
@@ -275,6 +275,13 @@ install-deps: ## Helm-install kube-prometheus-stack + cert-manager (CI-friendly 
 	$(HELM) upgrade --install kube-prom prometheus-community/kube-prometheus-stack \
 	  -n monitoring --create-namespace \
 	  -f deploy/helm/prometheus-values.yaml --wait --timeout 5m
+	# prometheus-adapter exposes http_requests_per_second as a Pods custom
+	# metric so the standard HPA in deploy/manifests/hpa.yaml can scale
+	# app-hpa. Without it, HPA reports FailedGetResourceMetric and stays
+	# at minReplicas — see docs/gap-report-v1.md G4.
+	$(HELM) upgrade --install prom-adapter prometheus-community/prometheus-adapter \
+	  -n monitoring \
+	  -f deploy/helm/prometheus-adapter-values.yaml --wait --timeout 3m
 
 .PHONY: deploy
 deploy: ## Apply all application manifests (namespaces, controller, services, HPA, sample CR).

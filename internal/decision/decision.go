@@ -183,7 +183,7 @@ type CapOutput struct {
 // cooldown_holding_*, never step_capped_*.
 func ApplyCapAndCooldown(in CapInput) CapOutput {
 	target := in.Recommended
-	reason := reasoning.NoChange
+	var reason string
 
 	switch {
 	case target > in.Current:

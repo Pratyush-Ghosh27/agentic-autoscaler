@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.23"
+  GO_VERSION: "1.24"
   PYTHON_VERSION: "3.12"
   KIND_VERSION: "v0.24.0"
   HELM_VERSION: "v3.16.0"
@@ -176,9 +176,18 @@ jobs:
         if: failure()
         run: |
           mkdir -p artifacts
-          kubectl logs -n agentic-system -l control-plane=controller-manager --tail=500 > artifacts/controller-logs.txt 2>/dev/null || true
+          # Pods that never reach Ready leave no logs. Capture state too
+          # so the next agent triaging this can see ImagePullBackOff /
+          # CrashLoopBackOff / scheduling failures without asking again.
+          kubectl get pods -A -o wide > artifacts/pods.txt 2>/dev/null || true
+          kubectl describe pods -n agentic-autoscaler-system > artifacts/describe-controller.txt 2>/dev/null || true
+          kubectl describe pods -n agentic-system > artifacts/describe-agentic-system.txt 2>/dev/null || true
+          kubectl describe pods -n demo > artifacts/describe-demo.txt 2>/dev/null || true
+          kubectl get events -A --sort-by=.lastTimestamp > artifacts/events.txt 2>/dev/null || true
+          kubectl logs -n agentic-autoscaler-system -l control-plane=controller-manager --tail=500 --all-containers > artifacts/controller-logs.txt 2>/dev/null || true
           kubectl logs -n agentic-system -l app=forecast-service --tail=500 > artifacts/forecast-logs.txt 2>/dev/null || true
-          kubectl get events -A > artifacts/events.txt 2>/dev/null || true
+          kubectl get aas -A -o yaml > artifacts/aas.yaml 2>/dev/null || true
+          kubectl get certificate -A > artifacts/certificates.txt 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: failure()

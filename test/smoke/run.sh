@@ -15,7 +15,10 @@
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-agentic-smoke-$$}"
-IMG_TAG="${IMG_TAG:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
+# Default to `latest` so the in-tree manifests (which all reference
+# `<image>:latest`) match what we build + load. Override at invocation if
+# you need version traceability:  IMG_TAG=v0.1.0 make smoke
+IMG_TAG="${IMG_TAG:-latest}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 
 cleanup() {
@@ -63,8 +66,11 @@ make deploy IMG_TAG="${IMG_TAG}"
 # 5. Wait for rollout
 # -----------------------------------------------------------------------
 step "[5/6] Waiting for pods to become ready"
-kubectl wait --for=condition=available deployment \
-    -l control-plane=controller-manager -n agentic-system --timeout=180s
+# `make deploy` already waited for the controller-manager rollout +
+# serving-cert. Re-confirm here so a manual run that bypassed `deploy`
+# still gets the right preconditions, and pick up the data-plane pieces.
+kubectl wait --for=condition=available deployment/agentic-autoscaler-controller-manager \
+    -n agentic-autoscaler-system --timeout=180s
 kubectl wait --for=condition=available deployment/forecast-service \
     -n agentic-system --timeout=180s
 kubectl wait --for=condition=available deployment/app-agentic \
@@ -77,30 +83,42 @@ kubectl wait --for=condition=available deployment/app-hpa \
 # -----------------------------------------------------------------------
 step "[6/6] Smoke assertions"
 
-# CR exists and is being observed (Phase eventually reaches Ready or Conflict
-# — both are valid; "Disabled" only when the kill-switch annotation is set).
-PHASE=""
+# Smoke is "everything is wired up correctly" — not "data is flowing".
+# The controller intentionally withholds .status.phase until it has
+# CLASSIFIER_MIN_POINTS=10 range samples (else it emits the
+# `metrics_unavailable` Warning); on a freshly-built cluster with zero
+# traffic this can take several minutes. Asserting on phase here would
+# require us to drive synthetic load, which belongs in the e2e job.
+#
+# What we *do* assert in smoke:
+#   1. The AgenticAutoscaler CR exists and was admitted (== webhook OK).
+#   2. The controller has emitted at least one reconcile Event against it
+#      (== reconciler is running and observing the CR; the specific
+#      reason — `metrics_unavailable`, `forecast_unavailable`, `ScaleUp`,
+#      `NoChange`, etc. — doesn't matter for smoke).
+#   3. The target /healthz endpoints are reachable.
+
+# Wait up to 60 s for at least one Event of any reason to land.
+EVENTS=0
 for _ in $(seq 1 30); do
-    PHASE=$(kubectl get aas app-agentic -n demo -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-    if [[ -n "${PHASE}" ]]; then break; fi
+    EVENTS=$(kubectl get events -n demo \
+        --field-selector involvedObject.kind=AgenticAutoscaler \
+        --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${EVENTS}" -ge 1 ]]; then break; fi
     sleep 2
 done
-if [[ -z "${PHASE}" ]]; then
-    echo "FAIL: AgenticAutoscaler app-agentic has no .status.phase after 60s"
-    kubectl describe aas app-agentic -n demo || true
-    exit 1
-fi
-echo "  AgenticAutoscaler phase: ${PHASE}"
-
-# At least one reconcile event of any reason.
-EVENTS=$(kubectl get events -n demo \
-    --field-selector involvedObject.kind=AgenticAutoscaler \
-    --no-headers 2>/dev/null | wc -l | tr -d ' ')
 if [[ "${EVENTS}" -lt 1 ]]; then
-    echo "FAIL: no events recorded against the AgenticAutoscaler"
+    echo "FAIL: no Events emitted against the AgenticAutoscaler after 60s"
+    kubectl describe aas app-agentic -n demo || true
+    kubectl logs -n agentic-autoscaler-system -l control-plane=controller-manager --tail=100 || true
     exit 1
 fi
-echo "  AgenticAutoscaler events: ${EVENTS}"
+echo "  AgenticAutoscaler Events observed: ${EVENTS}"
+
+# Surface the current phase if the controller has populated it (purely
+# informational — its absence is not a smoke failure).
+PHASE=$(kubectl get aas app-agentic -n demo -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+echo "  AgenticAutoscaler phase: ${PHASE:-<not-yet-populated>}"
 
 # target-app /healthz on both replicas via service.
 for svc in app-agentic app-hpa; do

@@ -64,7 +64,24 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        # IfNotPresent so kind/dev clusters use the locally-loaded image
+        # rather than trying to pull `:latest` from a registry that
+        # doesn't exist. In production, override IMG to a registry-tagged
+        # immutable digest and policy becomes a non-issue.
+        imagePullPolicy: IfNotPresent
         name: manager
+        env:
+          # Required (controller panics on startup if either is unset).
+          # See docs/design.md §4 for the full env-var inventory.
+          - name: FORECAST_SERVICE_URL
+            value: "http://forecast-service.agentic-system.svc:8000"
+          - name: PROMETHEUS_URL
+            value: "http://kube-prom-kube-prometheus-prometheus.monitoring.svc:9090"
+          # Optional — Ollama lives outside the cluster by default, so
+          # in-cluster installs leave OLLAMA_URL unset (worker no-ops on
+          # connection refused, see internal/explainer/worker.go).
+          - name: OLLAMA_MODEL
+            value: "llama3.2"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

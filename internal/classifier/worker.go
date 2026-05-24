@@ -13,6 +13,7 @@ package classifier
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -238,7 +239,7 @@ func (w *Worker) patchStatus(ctx context.Context, result PipelineResult) error {
 		MaxStepSize:              result.Params.MaxStep,
 		PreferredForecaster:      result.Params.PreferredForecaster,
 		ClassifiedAt:             metav1.NewTime(w.Now()),
-		HistoryPoints:            int32(result.HistoryPoints),
+		HistoryPoints:            historyPointsAsInt32(result.HistoryPoints),
 		Confidence:               result.Confidence,
 	}
 
@@ -291,4 +292,17 @@ func formatClassifiedMessage(r PipelineResult) string {
 		r.Pattern, r.Confidence, r.HistoryPoints,
 		r.Params.ScaleUpCooldown, r.Params.ScaleDownCooldown,
 		r.Params.MaxStep, r.Params.PreferredForecaster)
+}
+
+// historyPointsAsInt32 narrows an int to int32 with explicit saturation.
+// The HistoryPoints series can never realistically exceed 2³¹ samples in
+// our deployments, but the conversion is still proven safe for gosec.
+func historyPointsAsInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }

@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -71,9 +72,9 @@ type AgenticAutoscalerReconciler struct {
 //  1. Pre-checks (kill switch, deletion, HPA conflict).
 //  2. Prometheus instant + range queries.
 //  3. POST /recommend to the Forecast Service.
-//  4-5. Update sliding-window rps_per_pod estimate.
+//     4-5. Update sliding-window rps_per_pod estimate.
 //  5. ComputeRecommended (pre-cap, pre-cooldown).
-//  6-8. ApplyCapAndCooldown (step cap, cooldown gate, hysteresis).
+//     6-8. ApplyCapAndCooldown (step cap, cooldown gate, hysteresis).
 //  9. Patch /scale subresource if a change is needed.
 //  10. Emit a K8s Event with the reasoning token + notify ExplainWorker.
 //  11. Persist updated status.
@@ -321,8 +322,8 @@ func (r *AgenticAutoscalerReconciler) buildParamSources(aas *autoscalingv1alpha1
 			PreferredForecaster: aas.Spec.PreferredForecaster,
 		},
 		Defaults: decision.DefaultParams{
-			ScaleUpCooldown:   int32(r.Config.DefaultScaleUpCooldown / time.Second),
-			ScaleDownCooldown: int32(r.Config.DefaultScaleDownCooldown / time.Second),
+			ScaleUpCooldown:   durationSecondsAsInt32(r.Config.DefaultScaleUpCooldown),
+			ScaleDownCooldown: durationSecondsAsInt32(r.Config.DefaultScaleDownCooldown),
 			MaxStepSize:       r.Config.DefaultMaxStepSize,
 		},
 	}
@@ -410,4 +411,19 @@ func classifiedConfidence(aas *autoscalingv1alpha1.AgenticAutoscaler) string {
 		return ""
 	}
 	return aas.Status.ClassifiedParams.Confidence
+}
+
+// durationSecondsAsInt32 expresses a Duration in seconds, clamped to the
+// signed-32-bit range. Cooldown defaults are well inside this range
+// (single-digit minutes); the clamp exists purely so the conversion is
+// proven safe to gosec rather than a benign-but-flagged narrowing.
+func durationSecondsAsInt32(d time.Duration) int32 {
+	v := int64(d / time.Second)
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }

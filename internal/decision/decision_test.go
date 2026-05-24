@@ -14,7 +14,7 @@ import (
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/reasoning"
 )
 
-func ptr32(v int32) *int32   { return &v }
+func ptr32(v int32) *int32    { return &v }
 func ptrStr(s string) *string { return &s }
 
 // -----------------------------------------------------------------------

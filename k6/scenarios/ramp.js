@@ -1,0 +1,61 @@
+// Ramp scenario — linear ramp 0 → PEAK over RAMP_UP_DURATION, hold at PEAK
+// for RAMP_HOLD_DURATION, ramp back to 0 over RAMP_DOWN_DURATION.
+//
+// Tests the controller's response to a slowly building load: the forecast
+// model should pick up the trend before the cap kicks in, and cooldowns
+// should not prevent the controller from following a smooth trajectory.
+//
+// Env vars (all optional, defaults shown):
+//   RAMP_UP_DURATION    "5m"
+//   RAMP_HOLD_DURATION  "15m"
+//   RAMP_DOWN_DURATION  "5m"
+//   RAMP_RPS_PEAK       "200"
+
+import http from "k6/http";
+import { check } from "k6";
+import { getTargets, workURL } from "../lib/targets.js";
+
+const targets = getTargets();
+
+const RAMP_UP = __ENV.RAMP_UP_DURATION || "5m";
+const HOLD = __ENV.RAMP_HOLD_DURATION || "15m";
+const RAMP_DOWN = __ENV.RAMP_DOWN_DURATION || "5m";
+const PEAK = parseInt(__ENV.RAMP_RPS_PEAK || "200");
+
+export const options = {
+  scenarios: {
+    ramp: {
+      executor: "ramping-arrival-rate",
+      startRate: 0,
+      timeUnit: "1s",
+      preAllocatedVUs: 50,
+      maxVUs: 200,
+      stages: [
+        { target: PEAK, duration: RAMP_UP },
+        { target: PEAK, duration: HOLD },
+        { target: 0, duration: RAMP_DOWN },
+      ],
+    },
+  },
+  thresholds: {
+    "http_req_failed": ["rate<0.05"],
+    "http_req_duration{url:agentic}": ["p(95)<2000"],
+    "http_req_duration{url:hpa}": ["p(95)<2000"],
+  },
+};
+
+export default function () {
+  const resA = http.post(workURL(targets.agentic), null, {
+    tags: { url: "agentic" },
+  });
+  check(resA, {
+    "agentic status 2xx or 503": (r) => r.status === 200 || r.status === 503,
+  });
+
+  const resH = http.post(workURL(targets.hpa), null, {
+    tags: { url: "hpa" },
+  });
+  check(resH, {
+    "hpa status 2xx or 503": (r) => r.status === 200 || r.status === 503,
+  });
+}

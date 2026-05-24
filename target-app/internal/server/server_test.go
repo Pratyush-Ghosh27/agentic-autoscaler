@@ -21,3 +21,36 @@ func TestHealthz_ReturnsOK(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "ok")
 }
+
+func TestReadyz_DefaultReturnsOK(t *testing.T) {
+	srv := server.New(server.DefaultConfig())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestReadyz_FailingDependencyReturns503(t *testing.T) {
+	srv := server.New(server.DefaultConfig())
+	srv.SetReady(false)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestReadyz_RecoversToReady(t *testing.T) {
+	srv := server.New(server.DefaultConfig())
+	srv.SetReady(false)
+	srv.SetReady(true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}

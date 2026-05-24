@@ -11,7 +11,7 @@ SHELL       := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
 # ----- Versions (pinned) ------------------------------------------------
-GO_VERSION              ?= 1.23
+GO_VERSION              ?= 1.24
 PYTHON_VERSION          ?= 3.12
 KIND_VERSION            ?= 0.24.0
 HELM_VERSION            ?= 3.16.0

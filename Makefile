@@ -289,6 +289,7 @@ deploy: ## Apply all application manifests (namespaces, controller, services, HP
 	$(KUBECTL) apply -f deploy/manifests/forecast-service.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-agentic.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-hpa.yaml
+	$(KUBECTL) apply -f deploy/manifests/target-app-podmonitor.yaml
 	$(KUBECTL) apply -f deploy/manifests/hpa.yaml
 	$(KUBECTL) apply -k deploy/grafana
 	@echo "==> applying sample AgenticAutoscaler CR (requires webhook ready)..."
@@ -299,6 +300,7 @@ undeploy: ## Remove all application manifests.
 	-$(KUBECTL) delete -f deploy/manifests/agenticautoscaler-sample.yaml --ignore-not-found
 	-$(KUBECTL) delete -k deploy/grafana --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/hpa.yaml --ignore-not-found
+	-$(KUBECTL) delete -f deploy/manifests/target-app-podmonitor.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/target-hpa.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/target-agentic.yaml --ignore-not-found
 	-$(KUBECTL) delete -f deploy/manifests/forecast-service.yaml --ignore-not-found

@@ -35,3 +35,15 @@ prometheus:
       limits:
         memory: 1Gi
     storageSpec: {}
+    # By default kube-prometheus-stack only picks up PodMonitors and
+    # ServiceMonitors that carry the `release: kube-prom` label and live
+    # in the chart's namespace. We deliberately want target-app pods in
+    # the `demo` namespace to be scraped without us having to label every
+    # PodMonitor — so widen both selectors to match anything in any
+    # namespace.
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}

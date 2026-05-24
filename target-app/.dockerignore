@@ -1,0 +1,7 @@
+*.test
+*.out
+coverage.txt
+.idea/
+.vscode/
+*~
+*.swp

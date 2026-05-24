@@ -42,6 +42,41 @@ type AgenticAutoscalerSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+
+	// RpsPerPodMin is the safety floor for the self-calibrating
+	// rps_per_pod estimate. See docs/design.md §5 step 5.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RpsPerPodMin *int32 `json:"rpsPerPodMin,omitempty"`
+
+	// RpsPerPodMax is the safety ceiling for the self-calibrating
+	// rps_per_pod estimate.
+	// +kubebuilder:default=500
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RpsPerPodMax *int32 `json:"rpsPerPodMax,omitempty"`
+
+	// MaxStepSize caps replicas moved per reconcile. nil means "defer to
+	// classifier". Operator override per docs/design.md §8.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxStepSize *int32 `json:"maxStepSize,omitempty"`
+
+	// ScaleUpCooldownSeconds. nil means "defer to classifier".
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ScaleUpCooldownSeconds *int32 `json:"scaleUpCooldownSeconds,omitempty"`
+
+	// ScaleDownCooldownSeconds. nil means "defer to classifier".
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ScaleDownCooldownSeconds *int32 `json:"scaleDownCooldownSeconds,omitempty"`
+
+	// PreferredForecaster. nil or "auto" means "defer to classifier".
+	// +kubebuilder:validation:Enum=prophet;linear_extrap;auto
+	// +optional
+	PreferredForecaster *string `json:"preferredForecaster,omitempty"`
 }
 
 // CrossVersionObjectReference identifies a target Deployment.

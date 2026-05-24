@@ -269,11 +269,18 @@ install-deps: ## Helm-install kube-prometheus-stack + cert-manager (CI-friendly 
 deploy: ## Apply all application manifests (namespaces, controller, services, HPA, sample CR).
 	$(KUBECTL) apply -f deploy/manifests/namespace.yaml
 	$(KUBECTL) apply -k config/default
+	@echo "==> waiting for cert-manager to issue the serving certificate..."
+	$(KUBECTL) wait --for=condition=Ready certificate/agentic-autoscaler-serving-cert \
+	    -n agentic-autoscaler-system --timeout=180s
+	@echo "==> waiting for controller-manager rollout..."
+	$(KUBECTL) wait --for=condition=available deployment/agentic-autoscaler-controller-manager \
+	    -n agentic-autoscaler-system --timeout=180s
 	$(KUBECTL) apply -f deploy/manifests/forecast-service.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-agentic.yaml
 	$(KUBECTL) apply -f deploy/manifests/target-hpa.yaml
 	$(KUBECTL) apply -f deploy/manifests/hpa.yaml
 	$(KUBECTL) apply -k deploy/grafana
+	@echo "==> applying sample AgenticAutoscaler CR (requires webhook ready)..."
 	$(KUBECTL) apply -f deploy/manifests/agenticautoscaler-sample.yaml
 
 .PHONY: undeploy
@@ -351,7 +358,7 @@ port-forward-prometheus: ## Port-forward Prometheus to localhost:9090.
 
 .PHONY: logs-controller
 logs-controller: ## Tail controller logs.
-	$(KUBECTL) logs -n agentic-system -l control-plane=controller-manager -f
+	$(KUBECTL) logs -n agentic-autoscaler-system -l control-plane=controller-manager -f
 
 .PHONY: logs-forecast
 logs-forecast: ## Tail forecast-service logs.

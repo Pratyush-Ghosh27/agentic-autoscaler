@@ -112,8 +112,8 @@ jobs:
 
       - name: Wait for steady state
         run: |
-          kubectl wait --for=condition=available deployment \
-            -l control-plane=controller-manager -n agentic-system --timeout=180s
+          kubectl wait --for=condition=available deployment/agentic-autoscaler-controller-manager \
+            -n agentic-autoscaler-system --timeout=180s
           kubectl wait --for=condition=available deployment/forecast-service \
             -n agentic-system --timeout=300s
           kubectl wait --for=condition=available deployment/app-agentic -n demo --timeout=120s
@@ -136,7 +136,7 @@ jobs:
         if: failure()
         run: |
           mkdir -p artifacts
-          kubectl logs -n agentic-system -l control-plane=controller-manager --tail=2000 > artifacts/controller-logs.txt || true
+          kubectl logs -n agentic-autoscaler-system -l control-plane=controller-manager --tail=2000 > artifacts/controller-logs.txt || true
           kubectl logs -n agentic-system -l app=forecast-service --tail=1000 > artifacts/forecast-logs.txt || true
           kubectl get events -A --sort-by=.lastTimestamp > artifacts/events.txt || true
           kubectl get aas -A -o yaml > artifacts/aas.yaml || true

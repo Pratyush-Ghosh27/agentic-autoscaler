@@ -176,7 +176,7 @@ jobs:
         if: failure()
         run: |
           mkdir -p artifacts
-          kubectl logs -n agentic-system -l control-plane=controller-manager --tail=500 > artifacts/controller-logs.txt 2>/dev/null || true
+          kubectl logs -n agentic-autoscaler-system -l control-plane=controller-manager --tail=500 > artifacts/controller-logs.txt 2>/dev/null || true
           kubectl logs -n agentic-system -l app=forecast-service --tail=500 > artifacts/forecast-logs.txt 2>/dev/null || true
           kubectl get events -A > artifacts/events.txt 2>/dev/null || true
 

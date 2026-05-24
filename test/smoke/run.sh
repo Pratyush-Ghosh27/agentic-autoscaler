@@ -63,8 +63,11 @@ make deploy IMG_TAG="${IMG_TAG}"
 # 5. Wait for rollout
 # -----------------------------------------------------------------------
 step "[5/6] Waiting for pods to become ready"
-kubectl wait --for=condition=available deployment \
-    -l control-plane=controller-manager -n agentic-system --timeout=180s
+# `make deploy` already waited for the controller-manager rollout +
+# serving-cert. Re-confirm here so a manual run that bypassed `deploy`
+# still gets the right preconditions, and pick up the data-plane pieces.
+kubectl wait --for=condition=available deployment/agentic-autoscaler-controller-manager \
+    -n agentic-autoscaler-system --timeout=180s
 kubectl wait --for=condition=available deployment/forecast-service \
     -n agentic-system --timeout=180s
 kubectl wait --for=condition=available deployment/app-agentic \

@@ -60,8 +60,8 @@ make deploy IMG_TAG="${IMG_TAG}"
 
 # -----------------------------------------------------------------------
 step "[5/7] Waiting for steady state"
-kubectl wait --for=condition=available deployment \
-    -l control-plane=controller-manager -n agentic-system --timeout=180s
+kubectl wait --for=condition=available deployment/agentic-autoscaler-controller-manager \
+    -n agentic-autoscaler-system --timeout=180s
 kubectl wait --for=condition=available deployment/forecast-service \
     -n agentic-system --timeout=180s
 kubectl wait --for=condition=available deployment/app-agentic -n demo --timeout=120s

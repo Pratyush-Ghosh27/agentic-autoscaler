@@ -41,6 +41,12 @@ secret.*
 # Workspace-local toolchain (kubebuilder, etc.)
 .tools/
 
+# Workspace-local Go cache directories used when /tmp is too small
+# for `go test` (low-disk dev environments). Never commit these.
+.gocache/
+.gomodcache/
+.gotmp/
+
 # Python
 forecast-service/.venv/
 forecast-service/.pytest_cache/

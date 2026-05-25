@@ -23,8 +23,11 @@ resources:
 - ../webhook
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER'. 'WEBHOOK' components are required.
 - ../certmanager
-# [PROMETHEUS] To enable prometheus monitor, uncomment all sections with 'PROMETHEUS'.
-#- ../prometheus
+# [PROMETHEUS] ServiceMonitor for the controller's /metrics endpoint.
+# Without this, kube-prometheus-stack never scrapes the controller and
+# every agenticautoscaler_* dashboard panel is permanently blank on a
+# fresh `make deploy`. The ServiceMonitor lives at config/prometheus/.
+- ../prometheus
 # [METRICS] Expose the controller manager metrics service.
 - metrics_service.yaml
 # [NETWORK POLICY] Protect the /metrics endpoint and Webhook Server with NetworkPolicy.

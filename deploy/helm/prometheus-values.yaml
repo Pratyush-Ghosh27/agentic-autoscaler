@@ -7,8 +7,24 @@
 alertmanager:
   enabled: false
 
+# kube-state-metrics is required: the Grafana dashboard's first panel
+# ("Current Replicas — agentic vs HPA") queries kube_deployment_spec_replicas,
+# which only kube-state-metrics produces. The earlier disable-to-save-RAM
+# rationale doesn't apply — KSM idles at ~30 MB.
 kubeStateMetrics:
-  enabled: false
+  enabled: true
+
+# When KSM is enabled by the kube-prometheus-stack chart, the bundled
+# kube-state-metrics dependency runs in the `monitoring` namespace and
+# emits metrics with `namespace=<thing-being-described>` (the natural
+# label, e.g. `demo` for an app-agentic Deployment). The default scrape
+# config rewrites that to `monitoring` (the namespace KSM itself is in)
+# unless honorLabels is set. Without this, every dashboard query filtering
+# on {namespace="demo"} for KSM-sourced series matches nothing.
+kube-state-metrics:
+  prometheus:
+    monitor:
+      honorLabels: true
 
 nodeExporter:
   enabled: false

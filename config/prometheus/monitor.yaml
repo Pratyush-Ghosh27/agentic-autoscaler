@@ -13,6 +13,15 @@ spec:
     - path: /metrics
       port: https # Ensure this is the name of the port that exposes HTTPS metrics
       scheme: https
+      # honorLabels: every controller metric (see internal/controller/metrics.go)
+      # carries (namespace, name) labels keyed off the AAS CR being reconciled.
+      # kube-prometheus-stack's default scrape config also adds (namespace, pod)
+      # labels for the *controller pod*. Without honorLabels, the target-side
+      # labels win on collision: the controller's emitted namespace="demo" gets
+      # rewritten to "agentic-autoscaler-system" (or moved to exported_namespace
+      # depending on relabel config), and every dashboard query filtering on
+      # {namespace="demo"} matches nothing. Honor the controller's own labels.
+      honorLabels: true
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
         # TODO(user): The option insecureSkipVerify: true is not recommended for production since it disables

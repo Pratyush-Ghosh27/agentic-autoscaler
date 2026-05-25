@@ -2,30 +2,6 @@
 
 Date: 2026-05-25 Status: Draft for team review (v2 — complete spec; supersedes v1 dated 2026-05-21)
 
-> Revision notes (2026-05-25):
-> * Pass 1 (post-audit, findings 1, 2a, 3a, 4a, 5, 6, 8, 10): the most consequential change vs. the earlier v2 draft is that `forecast_hw_seasonal` was removed — the periodic-pattern forecaster is now `prophet` with the hourly regressor, which already captures the seasonal level cleanly without the design ambiguities of the HW seeding scheme.
-> * Pass 2 (post-review, findings 11–16): raised `CLASSIFIER_MIN_POINTS` from 24 → 72 (~6h at 5-min) and `CLASSIFIER_HIGH_CONFIDENCE_POINTS` from 48 → 240 (~20h) so classifier features (cv, p95, hourly_autocorr) are statistically meaningful and "high" confidence essentially guarantees `hourlyProfileValid`. Wired `context.trend_24h_slope` into `forecast_linear_extrap` as a noise-reduction prior (new env `LINEAR_EXTRAP_TREND_BLEND`). Renamed the cooldown constant `K_TOD_DOWN → K_PERIODIC_DOWN` in the spec (source rename tracked separately). Fixed the `historyPoints: 1440` example, the `Long-term context` prose-line gating, and the architecture diagram's cold-path bullet.
-> * Pass 3 (deeper audit, findings 17–24):
->   * **F17** (bug fix): added `current_minute_utc` to the `/recommend` context. The pass-1 `current_hour_utc`-only anchor left the ds construction's minute component undefined, which silently mislabeled ~30 of 60 Prophet/GBDT training rows by one UTC hour and effectively neutralised the hourly regressor.
->   * **F18** (bug fix): pinned `trend_24h_slope` units to **rps/min** with explicit `/ CONTEXT_DOWNSAMPLE_RESOLUTION_MIN` division. The pass-2 wiring of trend into `forecast_linear_extrap` would otherwise have blended a 5×-too-large slope value (rps/5-min-bucket) into a 1×-correct one (rps/min).
->   * **F19** (bug fix): switched the third re-classification trigger from `Deployment.metadata.generation` to the `deployment.kubernetes.io/revision` annotation. The generation field is bumped on every `/scale` patch, which would have caused this trigger to fire on every reconcile that scales — defeating its purpose. The revision annotation only changes on actual rollouts (image / env / command edits).
->   * **F20** (correctness improvement): seed the per-CR `rps_per_pod` ring buffer with **5 copies** of the persisted `status.rpsPerPodCurrent` on restart, not a single copy. The old single-copy seed was washed out by the second new observation; the new seed preserves the persisted estimate across the next 5+ observations, matching the documented intent.
->   * **F21** (spec ambiguity): pinned GBDT's timestamp-derived features (`hour_of_day_baseline`, `minute_in_hour`) to the same anchored ds array Prophet uses. Without this, the hour/minute features had undefined provenance.
->   * **F22** (clarification): explicit note that `auto` mode never returns `gbdt_quantile`. The GBDT path is intentionally opt-in — driven by the classifier's pattern decision or an explicit operator override only.
->   * **F23** (operability): made the steady-state RPS noise floor an env var (`RPS_PER_POD_NOISE_FLOOR_RPS`, default 10), so operators with intentionally-low-RPS workloads can tune it.
->   * **F24** (consistency): added `GBDT_MIN_POINTS` env var, mirroring `PROPHET_MIN_POINTS`. Both default to 30.
-> * Pass 4 (focused review of §7 + recommendation semantics, findings 25–30):
->   * **F25** (cross-reference): made §7 explicit that `trend_slope` (classifier feature) **is** `context.trend24hSlope`, computed once in §6.1 step 6.5 in rps/min. Eliminates the risk of an implementer recomputing it without F18's unit conversion.
->   * **F26** (calibration): replaced the `gradual_ramp` rule's absolute threshold (`abs(trend_slope) > 2.0 rps/min`, which fired only on 30×+ daily growth) with a relative threshold (`abs(trend_slope) * 1440 / max(mean, 1) > GRADUAL_RAMP_DAILY_DRIFT_FRAC`, default 0.20). Scale-invariant — 20% projected daily drift fires at any RPS level.
->   * **F27** (visibility): rewrote the `recommendedReplicas` semantics to honestly reflect that it's clamped to `[minReplicas, maxReplicas]`. Added `unboundedRecommended` to the K8s event message and new reasoning tokens `max_replicas_binding` / `min_replicas_binding` so operators can see when the CRD bound is the binding constraint. Added precedence rules between the new tokens and `step_capped_*` / `cooldown_holding_*`.
->   * **F28** (scale-awareness): replaced `peak_to_trough` denominator `mean(series) + 1` with `max(mean(series), 1.0)` — same behaviour at high RPS, removes the low-RPS bias where the additive `+1` regulariser dominated.
->   * **F29** (constants discipline): named the magic threshold `CV_GUARD_MEAN_RPS = 1.0` (used in `cv`'s zero-guard).
->   * **F30** (documentation): added a paragraph explaining why `periodic` outranks `spiky` in classification priority — Prophet's hourly regressor + 2× p95 cap is the right tool for periodic-spiky workloads where periodicity is the dominant signal.
-> * Pass 5 (final review, findings 31–33):
->   * **F31** (bug fix): `forecast_linear_extrap` now recomputes `b = mean(y) - m * mean(x)` after blending `m`. The pass-2 wiring changed `m` without recomputing `b`, which rotated the line around `x=0` instead of around the data's centroid and biased predictions by `(m_blended - m_original) * (n-1)/2` RPS. For a 60-min default window with even modest slope divergence, this was on the order of tens of RPS — large enough to materially affect replica decisions.
->   * **F32c** (consistency): `CV_GUARD_MEAN_RPS` moved from §7 hardcoded constants to §4 cold-path env vars (operator-tunable; depends on the workload's RPS scale). `GRADUAL_RAMP_DAILY_DRIFT_FRAC` stays as a hardcoded constant in §7 with a sentence explaining why (it defines what `gradual_ramp` *means* in this autoscaler; tuning it would silently shift the meaning of the pattern label).
->   * **F33** (UX gap from F27b): added prompt conditionals for `max_replicas_binding` and `min_replicas_binding` reasoning tokens. Without these, the LLM saw only the bare `Scaling: 5 → 10 (max_replicas_binding)` line and generated misleading prose ("scaled up to handle load") that hid the actual capacity-planning signal. New lines surface `unboundedRecommended` and the binding CRD bound directly to the operator. Plumbed `UnboundedRecommended`, `MaxReplicas`, `MinReplicas` into ExplainRequest fields.
-
 ## **1\. Overview**
 
 Kubernetes HPA is reactive: by the time CPU crosses the threshold, latency has already risen. The agentic autoscaler is a real Kubernetes operator that polls Prometheus for recent RPS history, asks a Forecast Service (auto-selecting between three forecasters: linear extrapolation, Prophet, and GBDT quantile) to predict RPS `FORECAST_HORIZON_MINUTES` ahead (default: 10 minutes), and patches the target Deployment's `/scale` subresource so capacity arrives before traffic does.
@@ -36,7 +12,7 @@ A pattern classifier observes each workload's long-run traffic history, identifi
 
 The cold path is a first-class contributor to forecasting, not just a parameter-tuning sidecar. Beyond cooldowns and step sizes, the classifier writes a compact context block — baseline RPS, p95 RPS, 24-element hourly profile, and 24-hour trend slope — that the hot path forwards to the Forecast Service on every call. Each forecaster uses this context to anchor its short-horizon prediction with long-horizon structure: Prophet adds the profile as an external regressor (which is what lets a 60-minute window predict an hourly cycle correctly); GBDT uses hour-of-day baseline as a feature; linear extrapolation blends its noisy 10-point recent slope with the cold-path 24h trend slope as a stability prior, and clips on p95 as a safety cap.
 
-Every event that changes replicas (`scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`) is followed asynchronously by a `scale_explained` K8s Event containing 2-3 sentences of plain English prose generated by a local Ollama LLM, explaining why the scaling decision was made using the actual traffic data, predicted RPS, classified pattern, long-term context, and effective parameters as context.
+Every event that changes replicas (`scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, or `max_replicas_binding` / `min_replicas_binding` *when replicas also changed this reconcile*) is followed asynchronously by a `scale_explained` K8s Event containing 2-3 sentences of plain English prose generated by a local Ollama LLM, explaining why the scaling decision was made using the actual traffic data, predicted RPS, classified pattern, long-term context, and effective parameters as context.
 
 ## **2\. Scope**
 
@@ -189,7 +165,7 @@ spec:
   # scaleDownCooldownSeconds: 120
   # preferredForecaster: "linear_extrap"   # "auto" | "prophet" | "linear_extrap" | "gbdt_quantile"
 status:
-  phase: "Ready" | "Disabled" | "Conflict"
+  phase: "Ready"                 # one of: "Ready" | "Disabled" | "Conflict"
   conflictReason: ""             # populated only when phase=Conflict
   currentReplicas: 4
   recommendedReplicas: 6
@@ -198,9 +174,9 @@ status:
   lastScaleTime: "2026-05-25T14:32:00Z"
   classifiedParams:              # written by ClassifierWorker; never written by reconciler
     pattern: "periodic"          # flat | periodic | spiky | gradual_ramp | default
-    scaleUpCooldownSeconds: 60
-    scaleDownCooldownSeconds: 300
-    maxStepSize: 3
+    scaleUpCooldownSeconds: 60         # formula at cv=0.5
+    scaleDownCooldownSeconds: 225      # formula at cv=0.5, hourly_autocorr=0.80
+    maxStepSize: 3                     # formula at peak_to_trough in (4, 8]
     preferredForecaster: "prophet"       # one of: linear_extrap | prophet | gbdt_quantile
     classifiedAt: "2026-05-25T14:00:00Z"
     historyPoints: 264               # 5-min buckets observed (~22h); near the 288 cap for a 24h window
@@ -238,7 +214,7 @@ Optional spec fields: `minReplicas`, `maxReplicas`, `rpsPerPodMin`, `rpsPerPodMa
 Admission webhook: the controller registers a validating admission webhook for `AgenticAutoscaler` that rejects Create and Update requests when:
 
 * `minReplicas < 1`  
-* `maxReplicas < minReplicas` (no hard ceiling — the CRD default of 10 is a convenience, not a constraint)  
+* `maxReplicas <= minReplicas` (no hard ceiling — the CRD default of 10 is a convenience, not a constraint; the strict inequality rules out the degenerate `min == max` case, which would otherwise leave the `maxStepSize` formula's clamp range `[1, maxReplicas - minReplicas]` empty)  
 * `rpsPerPodMin < 1`  
 * `rpsPerPodMin >= rpsPerPodMax`  
 * `maxStepSize < 1` (if set)  
@@ -253,7 +229,7 @@ Why two bounds instead of a single `rpsPerPod`: the operator only commits to a r
 
 ### **Configuration outside the CRD**
 
-Most timing, history window, threshold, and LLM parameters are configurable via controller env vars. Everything has a sensible default; only `FORECAST_SERVICE_URL` and `PROMETHEUS_URL` are required. Two env vars (`FORECAST_HORIZON_MINUTES` and `PROPHET_MIN_POINTS`) must also be set on the Forecast Service deployment — see the note after the hot path timing table.
+Most timing, history window, threshold, and LLM parameters are configurable via controller env vars. Everything has a sensible default; only `FORECAST_SERVICE_URL` and `PROMETHEUS_URL` are required on the controller. The Forecast Service has its own set of model-tuning env vars (listed under "Forecast Service model parameters" below) — all have defaults; none are required. There are no env vars that must be kept in sync between the two deployments.
 
 Infrastructure
 
@@ -269,12 +245,10 @@ Hot path timing
 | `RECONCILE_INTERVAL_SECONDS` | 60 | How often the reconciler runs per CR |
 | `HOT_PATH_HISTORY_MINUTES` | 60 | RPS history window sent to Forecast Service |
 | `HOT_PATH_MIN_POINTS` | 10 | Minimum data points before hot path can act |
-| `FORECAST_HORIZON_MINUTES` | 10 | How far ahead the Forecast Service predicts |
 | `FORECAST_TIMEOUT_SECONDS` | 5 | HTTP timeout for Forecast Service calls |
-| `PROPHET_MIN_POINTS` | 30 | History points needed to select Prophet over linear\_extrap in `auto` mode |
 | `RPS_PER_POD_NOISE_FLOOR_RPS` | 10 | Minimum `current_rps` required before a steady-state `current_rps / current_replicas` observation is pushed to the per-CR ring buffer (see §5 step 5). Below this floor, the ratio is dominated by sampling noise and would corrupt the median; we hold the previous `rps_per_pod` estimate instead. Operators with intentionally-low-RPS workloads (e.g., < 10 rps under load) should lower this to match. |
 
-Note: `FORECAST_HORIZON_MINUTES` and `PROPHET_MIN_POINTS` control logic inside the Forecast Service (Python), not the controller. Both env vars must be set on the Forecast Service deployment as well as the controller — keeping them in sync is the operator's responsibility. `RECONCILE_INTERVAL_SECONDS`, `HOT_PATH_HISTORY_MINUTES`, `HOT_PATH_MIN_POINTS`, `FORECAST_TIMEOUT_SECONDS`, and `RPS_PER_POD_NOISE_FLOOR_RPS` are controller-only. The Forecast Service-only env vars (`GBDT_QUANTILE`, `GBDT_MIN_POINTS`, `PROPHET_USE_HOURLY_REGRESSOR`, `LINEAR_EXTRAP_TREND_BLEND`) are listed in the next table and need only be set on the Forecast Service deployment.
+Note: every env var in the table above is controller-only. Forecast Service env vars (`FORECAST_HORIZON_MINUTES`, `PROPHET_MIN_POINTS`, `GBDT_QUANTILE`, `GBDT_MIN_POINTS`, `PROPHET_USE_HOURLY_REGRESSOR`, `LINEAR_EXTRAP_TREND_BLEND`) are listed in the Forecast Service model parameters table below and need only be set on the Forecast Service deployment. The controller learns the horizon from each `/recommend` response's `horizon_minutes` field, so it does not need a local copy of `FORECAST_HORIZON_MINUTES`.
 
 Cold path timing
 
@@ -301,6 +275,8 @@ Forecast Service model parameters (set on Forecast Service deployment)
 
 | Env var | Default | What it controls |
 | ----- | ----- | ----- |
+| `FORECAST_HORIZON_MINUTES` | 10 | How far ahead the Forecast Service predicts. Returned in each response as `horizon_minutes`, so the controller does not need its own copy. |
+| `PROPHET_MIN_POINTS` | 30 | History points needed to select Prophet over `linear_extrap` in `auto` mode. Used only by the Forecast Service's auto-selection logic; the controller does not gate anything on this threshold. |
 | `GBDT_QUANTILE` | 0.90 | Upper quantile predicted by `gbdt_quantile` (p90 \= scale for a worse-than-typical burst) |
 | `GBDT_MIN_POINTS` | 30 | Precondition for `forecast_gbdt_quantile`: if `len(rps_history) < GBDT_MIN_POINTS`, the path falls back to `forecast_linear_extrap`. Mirrors `PROPHET_MIN_POINTS`; both default to 30 because a few dozen samples is the rough lower bound for either model to fit something more honest than a line. |
 | `PROPHET_USE_HOURLY_REGRESSOR` | `true` | When true and `context.hourly_profile_valid` is true, Prophet adds `hour_baseline` as an external regressor. Operators who want to test Prophet without the seasonal prior can set this to `false`. |
@@ -464,7 +440,7 @@ This math is in the Controller, not the Forecast Service — the Forecast Servic
    
 ```
 
-If the cap was hit, tentatively record `step_capped_up` or `step_capped_down` as the reasoning token. Step 7 may overwrite this if cooldown also blocks.
+If the cap clipped `target` — i.e., the `min` / `max` actually reduced its value, not merely equalled it — tentatively record `step_capped_up` or `step_capped_down` as the reasoning token. Step 7 may overwrite this if cooldown also blocks.
 
 7. Apply cooldowns. Controller maintains per-CR in-memory `lastScaleUpTime` and `lastScaleDownTime` (seeded from `status.lastScaleTime` on restart per step 5, or "long ago" on a never-seen CR). Uses `effectiveCooldownUp` and `effectiveCooldownDown`:
 
@@ -490,14 +466,14 @@ Reasoning-token precedence (when multiple constraints fire in the same reconcile
 1. **Step 5** tentatively sets `max_replicas_binding` or `min_replicas_binding` when the forecaster's unbounded recommendation falls outside the CRD bounds.
 2. **Step 6** overwrites with `step_capped_up` / `step_capped_down` when the maxStep cap clips the move (because the immediate visible constraint is the cap, not the CRD bound — the cap is what the operator can act on by raising `spec.maxStepSize`). The CRD-bound information is still present implicitly: when both fire, `recommendedReplicas` will equal `spec.maxReplicas` (or `spec.minReplicas`) and the operator can compare against `unboundedRecommended` in the event message.
 3. **Step 7** overwrites with `cooldown_holding_*` when cooldown blocks the move entirely. `cooldown_holding_*` wins over `step_capped_*` because the final outcome is no replica change — and `step_capped_*` is reserved for events that do change replicas.
-4. **Step 8** hysteresis suppresses event emission entirely when `target == current_replicas` after all prior steps. ExplainWorker is therefore not triggered in cooldown-blocked cases.
+4. **Step 8** hysteresis suppresses the `/scale` patch (and therefore the ExplainWorker trigger) when `target == current_replicas` after all prior steps. The K8s event is still emitted for diagnostic visibility — `cooldown_holding_*`, `no_change`, and `max_replicas_binding` / `min_replicas_binding` (when the workload is already at the bound) are exactly the reasoning tokens that fire in this branch.
 
 A `max_replicas_binding` event without a `step_capped_*` or `cooldown_holding_*` override means the workload is at maxReplicas and the forecaster wanted more — operators should treat this as a capacity-planning signal regardless of whether replicas changed this reconcile.
 
 8. Hysteresis: only patch if `target != current_replicas`.  
 9. Patch `/scale`: patch the target Deployment's `/scale` subresource to `target`.  
 10. Emit a K8s Event with a reasoning token:  
-    * \`scale\_up\` / \`scale\_down\` / \`no\_change\` (normal cases)  
+    * `scale_up` / `scale_down` / `no_change` (normal cases — `no_change` is the implicit default reasoning when `target == current_replicas` after step 7 and no constraint above set a more specific token; `scale_up` / `scale_down` follow from the sign of `target - current_replicas`)  
       * `step_capped_up` / `step_capped_down` (cap clipped the target)  
       * `cooldown_holding_up` / `cooldown_holding_down` (cooldown blocked the scale)  
       * `max_replicas_binding` / `min_replicas_binding` (CRD bound is the binding constraint — the forecast asked for more/fewer replicas than `[spec.minReplicas, spec.maxReplicas]` permits. Step 6 cap and step 7 cooldown may still override this token if they also fire.)  
@@ -505,6 +481,7 @@ A `max_replicas_binding` event without a `step_capped_*` or `cooldown_holding_*`
       * `conflict_detected` (HPA conflict pre-check)  
       * `forecast_unavailable` (see §9)  
       * `metrics_unavailable` (see §9)  
+    * K8s Event `Reason` field naming: the snake_case reasoning tokens above are the canonical identifiers; the actual K8s Event `Reason` field uses their PascalCase equivalent (`ScaleUp`, `ScaleDown`, `NoChange`, `StepCappedUp`, `StepCappedDown`, `CooldownHoldingUp`, `CooldownHoldingDown`, `MaxReplicasBinding`, `MinReplicasBinding`, `KillSwitched`, `ConflictDetected`, `ForecastUnavailable`, `MetricsUnavailable`). The snake_case token is included verbatim in the event message body for log searchability. The same PascalCase ↔ snake_case convention applies to the ClassifierWorker tokens (`PatternClassified` / `pattern_classified`, `PatternUnknown` / `pattern_unknown` — §6.1) and the ExplainWorker token (`ScaleExplained` / `scale_explained` — §6.2).
     * Event message includes `current_rps`, `predicted_rps`, `current_replicas`, `target`, `recommendedReplicas`, `unboundedRecommended` (when it differs from `recommendedReplicas`), `model_used`, and the effective params used in this reconcile. The `unboundedRecommended` field surfaces capacity-planning signals: when it exceeds `spec.maxReplicas`, the operator can see exactly how much capacity the forecast asked for vs. how much the CRD bound permits, regardless of whether replicas changed this reconcile. After emitting any replica-changing event (`scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, or `max_replicas_binding` / `min_replicas_binding` *when replicas changed*): perform a drop-and-replace send to the ExplainWorker's buffered channel — see §6.2 for the channel semantics. The reconcile loop never waits on this send.  
 11. Update CR status (`currentReplicas`, `recommendedReplicas`, `predictedRPS`, `rpsPerPodCurrent`, `lastScaleTime`, `phase`, `conflictReason` if applicable). `status.recommendedReplicas` is the pre-cap, pre-cooldown value computed in step 5 (the `recommendedReplicas` local variable), not the post-cap target that step 6 mutates and step 9 patches. Publishing the unclipped recommendation is what lets the operator see "we wanted N but caps/cooldowns are preventing it." `lastScaleTime` is written as `max(lastScaleUpTime, lastScaleDownTime)` — the most recent scale event in either direction. The reconciler does not write `classifiedParams` — that field is owned exclusively by the ClassifierWorker.
 
@@ -854,7 +831,7 @@ No retry within a single classification cycle. If the Prometheus query fails, lo
 
 ### **6.2 ExplainWorker**
 
-Triggered by the reconciler after any event that changes replicas. The triggering reasoning tokens are `scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, and (when replicas also changed this reconcile) `max_replicas_binding` / `min_replicas_binding`. Cap-limited scales still change replica count and warrant explanation. `cooldown_holding_*` events do not trigger ExplainWorker because step 8's hysteresis guard suppresses any patch in that path. `max_replicas_binding` / `min_replicas_binding` events that fire **without** a replica change (i.e., the workload is already at the bound) emit the K8s Event for visibility but do not trigger ExplainWorker — prose explanation of "you're at the cap" is low-signal compared to the bare-fact event. The ExplainWorker always starts — no API key gate. If Ollama is unreachable or the model is not pulled, each failed call is logged and the controller continues normally; the next replica-changing event will trigger a fresh attempt.
+Triggered by the reconciler after any event that changes replicas. The triggering reasoning tokens are `scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, and (when replicas also changed this reconcile) `max_replicas_binding` / `min_replicas_binding`. Cap-limited scales still change replica count and warrant explanation. `cooldown_holding_*` events do not trigger ExplainWorker because step 7 sets `target = current_replicas` and step 8's hysteresis guard then skips the `/scale` patch — the trigger criterion (replica change) is not met, even though the diagnostic K8s event itself is still emitted (see §5 precedence rule 4). `max_replicas_binding` / `min_replicas_binding` events that fire **without** a replica change (i.e., the workload is already at the bound) emit the K8s Event for visibility but do not trigger ExplainWorker — prose explanation of "you're at the cap" is low-signal compared to the bare-fact event. The ExplainWorker always starts — no API key gate. If Ollama is unreachable or the model is not pulled, each failed call is logged and the controller continues normally; the next replica-changing event will trigger a fresh attempt.
 
 #### **Channel semantics — drop-and-replace**
 

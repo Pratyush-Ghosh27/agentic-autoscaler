@@ -38,7 +38,15 @@ esac
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 NS="${K6_NAMESPACE:-demo}"
 JOB_NAME="k6-${SCENARIO}"
-TIMEOUT="${K6_TIMEOUT:-1800s}"  # 30 min; longer than the longest scenario.
+# 60 min covers the longest currently-defined scenario (sustained =
+# 5m up + 30m hold + 5m down = 40m of k6, plus Pod schedule + image
+# pull + finalisation overhead). The previous 30m default would silently
+# time out on the sustained scenario before the Job actually completed —
+# the Job kept running, but the wrapper exited 1 and CI marked the run
+# failed. `kubectl wait` returns as soon as the Job condition transitions
+# to complete, so this is a ceiling not a floor; shorter scenarios still
+# finish in their own k6-script-driven duration.
+TIMEOUT="${K6_TIMEOUT:-3600s}"
 
 # Tunable defaults — kept in sync with k6/README.md. envsubst doesn't
 # understand shell `${VAR:-default}` syntax, so this is the only place

@@ -328,20 +328,47 @@ uninstall: manifests kustomize ## Uninstall the CRDs from the cluster.
 ##@ Scenarios
 # ============================================================
 
+# In-cluster k6 Job targets — the canonical way to drive the agentic vs
+# HPA comparison. The Job runs as a Pod inside the cluster, hits the
+# Service ClusterIP DNS, and gets real kube-proxy load-balancing across
+# every replica. See deploy/k6/run-incluster.sh for the rationale (and
+# why the host-mode targets below are NOT a valid substitute for any
+# scaling-related work).
+.PHONY: k6-incluster-ramp
+k6-incluster-ramp: ## Run the ramp k6 scenario as an in-cluster Job (correct LB).
+	bash deploy/k6/run-incluster.sh ramp
+
+.PHONY: k6-incluster-steady
+k6-incluster-steady: ## Run the steady k6 scenario as an in-cluster Job.
+	bash deploy/k6/run-incluster.sh steady
+
+.PHONY: k6-incluster-spiky
+k6-incluster-spiky: ## Run the spiky k6 scenario as an in-cluster Job.
+	bash deploy/k6/run-incluster.sh spiky
+
+.PHONY: k6-incluster-bursty
+k6-incluster-bursty: ## Run the bursty k6 scenario as an in-cluster Job.
+	bash deploy/k6/run-incluster.sh bursty
+
+# Host-mode k6 targets — useful for ad-hoc single-pod debugging only.
+# `kubectl port-forward svc/X` does NOT load-balance (kubernetes/kubernetes#15180);
+# every connection pins to the same Endpoint, so any replica > 1 is
+# effectively idle. Don't use these to evaluate autoscaler behaviour
+# — use the `k6-incluster-*` targets above.
 .PHONY: k6-ramp
-k6-ramp: ## Run the ramp k6 scenario.
+k6-ramp: ## Run the ramp k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/ramp.js
 
 .PHONY: k6-steady
-k6-steady: ## Run the steady k6 scenario.
+k6-steady: ## Run the steady k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/steady.js
 
 .PHONY: k6-spiky
-k6-spiky: ## Run the spiky k6 scenario.
+k6-spiky: ## Run the spiky k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/spiky.js
 
 .PHONY: k6-bursty
-k6-bursty: ## Run the bursty k6 scenario.
+k6-bursty: ## Run the bursty k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/bursty.js
 
 # ============================================================

@@ -1,0 +1,136 @@
+---
+# In-cluster k6 load-generation Job.
+#
+# Drives traffic against both `app-agentic` and `app-hpa` Services from
+# inside the cluster, so kube-proxy load-balances across all replicas of
+# each Deployment. This is the only way the agentic vs HPA comparison
+# is methodologically valid — `kubectl port-forward svc/X` from outside
+# the cluster pins all traffic to a single Endpoint for the session's
+# lifetime (kubernetes/kubernetes#15180), which silently invalidates
+# every replica-count-based scaling decision the comparison is meant to
+# evaluate.
+#
+# Parameterised via envsubst by the deploy/k6/run-incluster.sh wrapper.
+# The wrapper sets defaults for every variable substituted here, then
+# invokes envsubst with an explicit whitelist so the in-pod shell
+# script's $TARGET_AGENTIC_URL / $TARGET_HPA_URL references (which need
+# to be resolved at container start, not template-render time) pass
+# through unchanged.
+#
+# k6 image pin: grafana/k6:0.54.0 matches the K6_VERSION used in the
+# nightly workflow. Bump both together.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-${SCENARIO}
+  namespace: demo
+  labels:
+    app: k6
+    scenario: ${SCENARIO}
+spec:
+  # Don't retry — one run is the result. A flaky run is a regression
+  # signal, not noise to be smoothed away.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: k6
+        scenario: ${SCENARIO}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.54.0
+          imagePullPolicy: IfNotPresent
+          # `--no-summary` keeps stdout clean for the wrapper; the
+          # quantitative comparison reads from Prometheus, not k6's
+          # own summary, so we don't need it. The TARGET_*_URL refs
+          # below are deliberately NOT in the envsubst whitelist —
+          # they're resolved at container start as Pod-level env vars,
+          # not by the host's envsubst pass.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "==> k6 ${SCENARIO} starting"
+              echo "    TARGET_AGENTIC_URL=$TARGET_AGENTIC_URL"
+              echo "    TARGET_HPA_URL=$TARGET_HPA_URL"
+              k6 run --no-summary /scripts/scenarios/${SCENARIO}.js
+              echo "==> k6 ${SCENARIO} done"
+          env:
+            # Cluster-internal Service DNS — kube-proxy load-balances
+            # across all ready Endpoints behind each ClusterIP.
+            - name: TARGET_AGENTIC_URL
+              value: "http://app-agentic.demo.svc.cluster.local"
+            - name: TARGET_HPA_URL
+              value: "http://app-hpa.demo.svc.cluster.local"
+            # Per-scenario tunables. The wrapper script sets a default
+            # for each before calling envsubst; envsubst doesn't
+            # support shell `${VAR:-default}` syntax so the wrapper is
+            # the only source of defaults.
+            - name: RAMP_UP_DURATION
+              value: "${RAMP_UP_DURATION}"
+            - name: RAMP_HOLD_DURATION
+              value: "${RAMP_HOLD_DURATION}"
+            - name: RAMP_DOWN_DURATION
+              value: "${RAMP_DOWN_DURATION}"
+            - name: RAMP_RPS_PEAK
+              value: "${RAMP_RPS_PEAK}"
+            - name: STEADY_RPS
+              value: "${STEADY_RPS}"
+            - name: STEADY_DURATION
+              value: "${STEADY_DURATION}"
+            - name: SPIKE_BASE_RPS
+              value: "${SPIKE_BASE_RPS}"
+            - name: SPIKE_PEAK_RPS
+              value: "${SPIKE_PEAK_RPS}"
+            - name: SPIKE_INTERVAL
+              value: "${SPIKE_INTERVAL}"
+            - name: SPIKE_DURATION
+              value: "${SPIKE_DURATION}"
+            - name: SPIKY_TOTAL_DURATION
+              value: "${SPIKY_TOTAL_DURATION}"
+            - name: BURST_SIZE
+              value: "${BURST_SIZE}"
+            - name: BURST_MIN_INTERVAL
+              value: "${BURST_MIN_INTERVAL}"
+            - name: BURST_MAX_INTERVAL
+              value: "${BURST_MAX_INTERVAL}"
+            - name: BURSTY_TOTAL_DURATION
+              value: "${BURSTY_TOTAL_DURATION}"
+            - name: BURSTY_ITERATIONS
+              value: "${BURSTY_ITERATIONS}"
+          resources:
+            # k6 is a load generator; CPU is what it actually needs.
+            # Memory is small. Numbers from the k6 author's own
+            # recommendation for a few-hundred-VU run.
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        # Project the ConfigMap into a directory tree that matches the
+        # k6/ source layout, so each scenario's `import "../lib/targets.js"`
+        # resolves cleanly. ConfigMap keys can't contain slashes, so we
+        # store flat-named keys and remap them via items[].path.
+        - name: scripts
+          configMap:
+            name: k6-scripts
+            items:
+              - key: targets.js
+                path: lib/targets.js
+              - key: ramp.js
+                path: scenarios/ramp.js
+              - key: steady.js
+                path: scenarios/steady.js
+              - key: spiky.js
+                path: scenarios/spiky.js
+              - key: bursty.js
+                path: scenarios/bursty.js

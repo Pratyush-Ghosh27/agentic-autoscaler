@@ -72,19 +72,43 @@ echo "Sleeping ${WARMUP_SECONDS}s for classifier first-run + reconciler warmup..
 sleep "${WARMUP_SECONDS}"
 
 # -----------------------------------------------------------------------
-step "[6/7] Running k6 ramp (${RAMP_DURATION}) against both targets"
+step "[6/7] Running k6 ramp as an in-cluster Job"
 
-# Use cluster-internal DNS through k6's --insecure-skip-tls-verify path:
-# we resolve the ClusterIP and inject as plain HTTP, since the nodes are
-# directly reachable from the runner via kind's docker network.
-TARGET_AGENTIC_URL="http://$(kubectl get svc app-agentic -n demo -o jsonpath='{.spec.clusterIP}')"
-TARGET_HPA_URL="http://$(kubectl get svc app-hpa     -n demo -o jsonpath='{.spec.clusterIP}')"
-export TARGET_AGENTIC_URL TARGET_HPA_URL
+# Two reasons we run k6 inside the cluster instead of from the host:
+#
+#   1. ClusterIPs are not routable from the host on every Docker
+#      flavour. Linux Docker shares the kernel routing table with the
+#      kind nodes' docker network and *can* reach 10.96.0.0/12; Docker
+#      Desktop (macOS, Windows) and rootless Docker can't. The earlier
+#      version of this script assumed Linux Docker and broke silently
+#      on Desktop. Running k6 in-cluster sidesteps the routing question
+#      entirely.
+#
+#   2. Even on Linux Docker where ClusterIPs are reachable from the
+#      host, the previous version that fell through to
+#      `kubectl port-forward svc/...` would have been worse: port-forward
+#      pins all traffic to a single Endpoint for the session
+#      (kubernetes/kubernetes#15180), so any replica > 1 receives no
+#      load and the autoscaler comparison becomes meaningless.
+#
+# Tunables come from the workflow's RAMP_*_DURATION inputs, which the
+# in-cluster Job reads as env vars on the Pod. Defaults match k6/README.md.
+export RAMP_UP_DURATION="${RAMP_UP_DURATION:-5m}"
+export RAMP_HOLD_DURATION="${RAMP_HOLD_DURATION:-15m}"
+export RAMP_DOWN_DURATION="${RAMP_DOWN_DURATION:-5m}"
 
-echo "  TARGET_AGENTIC_URL=${TARGET_AGENTIC_URL}"
-echo "  TARGET_HPA_URL=${TARGET_HPA_URL}"
+# RAMP_DURATION is the total wall clock the caller asked for. We do
+# not pass `--duration` to `k6 run` because in k6 ≥ 0.50 a CLI
+# `--duration` *replaces* the script's `scenarios:` block with a
+# default 1-VU scenario, silently turning a 200-RPS arrival-rate ramp
+# into a single-VU sequential loop. The script's own stages drive the
+# duration; RAMP_DURATION is informational here for the operator.
+echo "  RAMP_DURATION (informational): ${RAMP_DURATION}"
+echo "  RAMP_UP_DURATION:   ${RAMP_UP_DURATION}"
+echo "  RAMP_HOLD_DURATION: ${RAMP_HOLD_DURATION}"
+echo "  RAMP_DOWN_DURATION: ${RAMP_DOWN_DURATION}"
 
-k6 run k6/scenarios/ramp.js --duration "${RAMP_DURATION}"
+bash deploy/k6/run-incluster.sh ramp
 
 # -----------------------------------------------------------------------
 step "[7/7] Asserting quantitative results (TOLERANCE=${TOLERANCE})"

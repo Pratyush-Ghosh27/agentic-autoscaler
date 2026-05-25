@@ -47,7 +47,8 @@ env:
   PYTHON_VERSION: "3.12"
   KIND_VERSION: "v0.24.0"
   HELM_VERSION: "v3.16.0"
-  K6_VERSION: "v0.54.0"
+  # k6 version is pinned at deploy/k6/job.yaml's image tag (the in-cluster
+  # Pod is the only place k6 actually runs now).
   TOLERANCE: ${{ inputs.tolerance || '1.10' }}
   RAMP_UP_DURATION:   ${{ inputs.ramp_up_duration   || '5m'  }}
   RAMP_HOLD_DURATION: ${{ inputs.ramp_hold_duration || '15m' }}
@@ -80,13 +81,10 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Install k6
-        run: |
-          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
-            | tar xz --strip-components=1 -C /tmp
-          sudo mv /tmp/k6 /usr/local/bin/k6
-          k6 version
-
+      # k6 itself runs as a container inside the kind cluster
+      # (deploy/k6/job.yaml pins grafana/k6:0.54.0); no host-side k6
+      # binary needed. envsubst (part of gettext-base, preinstalled on
+      # ubuntu-latest) is what the wrapper uses to template the Job.
       - name: Install jq
         run: sudo apt-get install -y jq
 

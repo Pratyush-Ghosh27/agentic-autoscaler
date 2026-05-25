@@ -73,8 +73,15 @@ spec:
         env:
           # Required (controller panics on startup if either is unset).
           # See docs/design.md §4 for the full env-var inventory.
+          #
+          # The Service exposes port 80 (targeting the container's 8000);
+          # see deploy/manifests/forecast-service.yaml. We omit the port
+          # here so port 80 is implied — the previous explicit ":8000"
+          # made every forecast call connection-refused, the controller
+          # surfaced ForecastUnavailable Events, and predicted_rps was
+          # never populated.
           - name: FORECAST_SERVICE_URL
-            value: "http://forecast-service.agentic-system.svc:8000"
+            value: "http://forecast-service.agentic-system.svc"
           - name: PROMETHEUS_URL
             value: "http://kube-prom-kube-prometheus-prometheus.monitoring.svc:9090"
           # Optional — Ollama lives outside the cluster by default, so

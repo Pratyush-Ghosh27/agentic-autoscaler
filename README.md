@@ -64,7 +64,8 @@ Step-by-step walkthrough: [`docs/runbooks/kind-bootstrap.md`](docs/runbooks/kind
 The controller binary requires:
 
 - `FORECAST_SERVICE_URL` — Forecast Service endpoint (e.g.
-  `http://forecast-service.agentic-system.svc:8000`)
+  `http://forecast-service.agentic-system.svc` — port 80, the in-cluster
+  Service's default; not `:8000`, that's the container port)
 - `PROMETHEUS_URL` — Prometheus endpoint
 
 Everything else has documented defaults in

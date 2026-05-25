@@ -20,5 +20,14 @@ spec:
     name: app-agentic
   minReplicas: 2
   maxReplicas: 10
-  rpsPerPodMin: 50
-  rpsPerPodMax: 500
+  # rpsPerPodMin/Max bracket the rps_per_pod target the classifier may
+  # converge on. They are jointly tuned with target-*.yaml's
+  # TARGET_CONCURRENCY=8 (per-pod capacity ~70 RPS) and hpa.yaml's
+  # averageValue=30 so the steady-state operating point matches HPA's;
+  # the spread (10 → 30) gives the classifier 3× of slack to be more
+  # aggressive than HPA on periodic / spiky patterns. The schema-level
+  # defaults (50 / 500 in api/v1alpha1/agenticautoscaler_types.go) are
+  # left untouched — those are universal safety bounds, not workload-
+  # specific tunings.
+  rpsPerPodMin: 10
+  rpsPerPodMax: 30

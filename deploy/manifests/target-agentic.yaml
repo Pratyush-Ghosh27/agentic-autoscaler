@@ -34,8 +34,18 @@ spec:
           env:
             - name: TARGET_PORT
               value: "8080"
+            # Per-pod semaphore. Together with TARGET_WORK_DURATION_MS this
+            # caps single-pod throughput at concurrency / work_duration ≈
+            # 8 / 0.115s ≈ 70 RPS. The earlier value of 50 yielded ~435 RPS
+            # per pod, which is so much higher than the load profiles that
+            # neither autoscaler ever scaled past minReplicas — both targets
+            # served identical traffic from identical replica counts and
+            # produced bit-for-bit identical p99/5xx, hiding the predictive
+            # advantage entirely. Keep TARGET_CONCURRENCY here in lockstep
+            # with hpa.yaml's averageValue and the AgenticAutoscaler's
+            # rpsPerPodMin/Max — see deploy/manifests/hpa.yaml's header.
             - name: TARGET_CONCURRENCY
-              value: "50"
+              value: "8"
             - name: TARGET_WORK_DURATION_MS
               value: "100"
             - name: TARGET_WORK_JITTER_MS

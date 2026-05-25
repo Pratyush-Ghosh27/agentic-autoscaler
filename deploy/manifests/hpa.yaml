@@ -1,9 +1,20 @@
 ---
-# Standard HPA for app-hpa. Min/max replicas and targetAverageValue match
-# the AgenticAutoscaler's spec (rpsPerPodMax/2 = 250 → here 200 to give
-# the agentic side a slight workload-aware headroom). Behavior policies
-# match the AgenticAutoscaler's design defaults: 60s scale-up cooldown,
-# 300s scale-down cooldown, max +4 / -2 pods per minute.
+# Standard HPA for app-hpa. The numeric tunings here are jointly chosen
+# with target-{agentic,hpa}.yaml's TARGET_CONCURRENCY and the
+# AgenticAutoscaler sample's rpsPerPodMin/Max so that both controllers
+# operate at the same steady-state utilisation point — leaving any
+# observed difference attributable to *reaction time* (the predictive
+# advantage), not to a target-RPS mismatch.
+#
+#   per-pod capacity ≈ TARGET_CONCURRENCY / TARGET_WORK_DURATION
+#                    ≈ 8 / 0.115s ≈ 70 RPS
+#   averageValue=30 → ~43% utilisation trigger
+#   AgenticAutoscaler matches this with rpsPerPodMax=30, but its
+#   rpsPerPodMin=10 lets the classifier scale up to 3× more eagerly
+#   when it identifies a periodic / spiky pattern.
+#
+# Behavior policies match the AgenticAutoscaler's design defaults:
+# 60s scale-up cooldown, 300s scale-down cooldown, +4 / -2 pods per minute.
 #
 # Note: the http_requests_per_second pod metric is provided by Prometheus
 # Adapter (or kube-state-metrics custom resource); the kind cluster's
@@ -30,7 +41,7 @@ spec:
           name: http_requests_per_second
         target:
           type: AverageValue
-          averageValue: "200"
+          averageValue: "30"
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60

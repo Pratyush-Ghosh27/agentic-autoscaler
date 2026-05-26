@@ -269,7 +269,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			TargetReplicas:        capOut.Target,
 			CurrentRPS:            currentRPS,
 			PredictedRPS:          forecastResp.PredictedRPS,
-			HorizonMinutes:        int(r.Config.ForecastHorizon / time.Minute),
+			HorizonMinutes:        forecastResp.HorizonMinutes,
 			ModelUsed:             forecastResp.ModelUsed,
 			Pattern:               classifiedPattern(&aas),
 			Confidence:            classifiedConfidence(&aas),

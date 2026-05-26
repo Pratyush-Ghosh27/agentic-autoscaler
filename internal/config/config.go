@@ -18,20 +18,28 @@ type Config struct {
 	ForecastServiceURL string
 	PrometheusURL      string
 
-	// Hot-path timing.
+	// Hot-path timing. FORECAST_HORIZON_MINUTES is intentionally absent
+	// from the controller config: per design_v2.md F36 it is a Forecast
+	// Service property, and the controller now reads
+	// RecommendResponse.HorizonMinutes from each /recommend reply.
 	ReconcileInterval time.Duration // RECONCILE_INTERVAL_SECONDS, default 60s
 	HotPathHistory    time.Duration // HOT_PATH_HISTORY_MINUTES, default 60m
 	HotPathMinPoints  int32         // HOT_PATH_MIN_POINTS, default 10
-	ForecastHorizon   time.Duration // FORECAST_HORIZON_MINUTES, default 10m
 	ForecastTimeout   time.Duration // FORECAST_TIMEOUT_SECONDS, default 5s
-	ProphetMinPoints  int32         // PROPHET_MIN_POINTS, default 60
+	ProphetMinPoints  int32         // PROPHET_MIN_POINTS, default 30 (F2a-revisited; lowered from 60)
 
 	// Cold-path timing.
 	ClassifierInterval             time.Duration // CLASSIFIER_INTERVAL_MINUTES, default 30m
 	ClassifierHistory              time.Duration // CLASSIFIER_HISTORY_HOURS, default 24h
-	ClassifierMinPoints            int32         // CLASSIFIER_MIN_POINTS, default 70 (must be >= 70 per §7)
+	ClassifierMinPoints            int32         // CLASSIFIER_MIN_POINTS, default 72 (F2a-revisited; floor is L+10 where L=60/CONTEXT_DOWNSAMPLE_RESOLUTION_MIN)
 	ClassifierHighConfidencePoints int32         // CLASSIFIER_HIGH_CONFIDENCE_POINTS, default 240
 	ClassifierDedup                time.Duration // CLASSIFIER_DEDUP_SECONDS, default 60s
+
+	// Cold-path resolution (v2).
+	ContextResolutionMinutes int32   // CONTEXT_DOWNSAMPLE_RESOLUTION_MIN, default 5 (G11)
+	CVGuardMeanRPS           float64 // CV_GUARD_MEAN_RPS, default 1.0 (F29, F32c)
+	RpsPerPodNoiseFloorRPS   int32   // RPS_PER_POD_NOISE_FLOOR_RPS, default 10 (F23)
+	HourlyProfileMinHours    int32   // HOURLY_PROFILE_MIN_HOURS, default 12 (G11)
 
 	// Pre-classification reconcile defaults.
 	DefaultScaleUpCooldown   time.Duration // DEFAULT_SCALE_UP_COOLDOWN_SECONDS, default 60s
@@ -59,6 +67,22 @@ func envIntOrDefault(name string, def int32, errs *[]string) int32 {
 		return def
 	}
 	return int32(v)
+}
+
+// envFloat64OrDefault reads a float64 env var, returns the default if
+// unset. Records a parse error in errs (and returns the default) if the
+// var is set but unparseable.
+func envFloat64OrDefault(name string, def float64, errs *[]string) float64 {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		*errs = append(*errs, fmt.Sprintf("%s: %v", name, err))
+		return def
+	}
+	return v
 }
 
 // envSecondsOrDefault reads a seconds-valued env var as a Duration.
@@ -119,15 +143,19 @@ func LoadFromEnv() (Config, error) {
 	cfg.ReconcileInterval = envSecondsOrDefault("RECONCILE_INTERVAL_SECONDS", 60*time.Second, &errs)
 	cfg.HotPathHistory = envMinutesOrDefault("HOT_PATH_HISTORY_MINUTES", 60*time.Minute, &errs)
 	cfg.HotPathMinPoints = envIntOrDefault("HOT_PATH_MIN_POINTS", 10, &errs)
-	cfg.ForecastHorizon = envMinutesOrDefault("FORECAST_HORIZON_MINUTES", 10*time.Minute, &errs)
 	cfg.ForecastTimeout = envSecondsOrDefault("FORECAST_TIMEOUT_SECONDS", 5*time.Second, &errs)
-	cfg.ProphetMinPoints = envIntOrDefault("PROPHET_MIN_POINTS", 60, &errs)
+	cfg.ProphetMinPoints = envIntOrDefault("PROPHET_MIN_POINTS", 30, &errs)
 
 	cfg.ClassifierInterval = envMinutesOrDefault("CLASSIFIER_INTERVAL_MINUTES", 30*time.Minute, &errs)
 	cfg.ClassifierHistory = envHoursOrDefault("CLASSIFIER_HISTORY_HOURS", 24*time.Hour, &errs)
-	cfg.ClassifierMinPoints = envIntOrDefault("CLASSIFIER_MIN_POINTS", 70, &errs)
+	cfg.ClassifierMinPoints = envIntOrDefault("CLASSIFIER_MIN_POINTS", 72, &errs)
 	cfg.ClassifierHighConfidencePoints = envIntOrDefault("CLASSIFIER_HIGH_CONFIDENCE_POINTS", 240, &errs)
 	cfg.ClassifierDedup = envSecondsOrDefault("CLASSIFIER_DEDUP_SECONDS", 60*time.Second, &errs)
+
+	cfg.ContextResolutionMinutes = envIntOrDefault("CONTEXT_DOWNSAMPLE_RESOLUTION_MIN", 5, &errs)
+	cfg.CVGuardMeanRPS = envFloat64OrDefault("CV_GUARD_MEAN_RPS", 1.0, &errs)
+	cfg.RpsPerPodNoiseFloorRPS = envIntOrDefault("RPS_PER_POD_NOISE_FLOOR_RPS", 10, &errs)
+	cfg.HourlyProfileMinHours = envIntOrDefault("HOURLY_PROFILE_MIN_HOURS", 12, &errs)
 
 	cfg.DefaultScaleUpCooldown = envSecondsOrDefault("DEFAULT_SCALE_UP_COOLDOWN_SECONDS", 60*time.Second, &errs)
 	cfg.DefaultScaleDownCooldown = envSecondsOrDefault("DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS", 300*time.Second, &errs)
@@ -146,15 +174,43 @@ func LoadFromEnv() (Config, error) {
 	return cfg, nil
 }
 
-// validate runs cross-field bound checks. Per docs/design.md §4 and §7.
+// validate runs cross-field bound checks. Per docs/design_v2.md §4, §7
+// and the hourly-autocorr derivation in §6.1.
 func (c Config) validate() []string {
 	var errs []string
 
-	// §7 hard floor for tod_correlation to be computable.
-	if c.ClassifierMinPoints < 70 {
+	// CONTEXT_DOWNSAMPLE_RESOLUTION_MIN must be positive — it appears
+	// as a divisor in the hourly-autocorr lag floor below and as the
+	// PromQL query step in the cold path.
+	if c.ContextResolutionMinutes < 1 {
 		errs = append(errs, fmt.Sprintf(
-			"CLASSIFIER_MIN_POINTS=%d violates the design §7 floor of 70 (tod_correlation requires 60-point lag + 10 minimum overlap)",
-			c.ClassifierMinPoints))
+			"CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=%d must be >= 1",
+			c.ContextResolutionMinutes))
+	} else {
+		// Hourly-autocorr lag floor: MIN_POINTS must satisfy L + 10
+		// where L = 60 / CONTEXT_DOWNSAMPLE_RESOLUTION_MIN. At v2 default
+		// resolution=5 the floor is 22; at legacy v1 resolution=1 it is 70.
+		lag := int32(60) / c.ContextResolutionMinutes
+		floor := lag + 10
+		if c.ClassifierMinPoints < floor {
+			errs = append(errs, fmt.Sprintf(
+				"CLASSIFIER_MIN_POINTS=%d violates floor of %d (= 60/%d + 10) at the configured resolution",
+				c.ClassifierMinPoints, floor, c.ContextResolutionMinutes))
+		}
+	}
+
+	if c.HourlyProfileMinHours < 1 || c.HourlyProfileMinHours > 24 {
+		errs = append(errs, fmt.Sprintf(
+			"HOURLY_PROFILE_MIN_HOURS=%d must be in [1, 24]",
+			c.HourlyProfileMinHours))
+	}
+	if c.CVGuardMeanRPS < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"CV_GUARD_MEAN_RPS=%v must be >= 0", c.CVGuardMeanRPS))
+	}
+	if c.RpsPerPodNoiseFloorRPS < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"RPS_PER_POD_NOISE_FLOOR_RPS=%d must be >= 0", c.RpsPerPodNoiseFloorRPS))
 	}
 
 	// High confidence must require at least as many points as medium confidence.
@@ -194,6 +250,10 @@ func (c Config) validate() []string {
 // Summary returns a multi-line, deterministic key=value rendering of the
 // resolved config, suitable for one-shot logging at manager startup.
 // Values are not redacted — the controller's config is not secret.
+//
+// FORECAST_HORIZON_MINUTES is intentionally absent: per F36 it is a
+// Forecast Service property, not a controller property; the controller
+// reads it from the /recommend response.
 func (c Config) Summary() string {
 	return fmt.Sprintf(
 		"FORECAST_SERVICE_URL=%s\n"+
@@ -201,7 +261,6 @@ func (c Config) Summary() string {
 			"RECONCILE_INTERVAL_SECONDS=%d\n"+
 			"HOT_PATH_HISTORY_MINUTES=%d\n"+
 			"HOT_PATH_MIN_POINTS=%d\n"+
-			"FORECAST_HORIZON_MINUTES=%d\n"+
 			"FORECAST_TIMEOUT_SECONDS=%d\n"+
 			"PROPHET_MIN_POINTS=%d\n"+
 			"CLASSIFIER_INTERVAL_MINUTES=%d\n"+
@@ -209,6 +268,10 @@ func (c Config) Summary() string {
 			"CLASSIFIER_MIN_POINTS=%d\n"+
 			"CLASSIFIER_HIGH_CONFIDENCE_POINTS=%d\n"+
 			"CLASSIFIER_DEDUP_SECONDS=%d\n"+
+			"CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=%d\n"+
+			"CV_GUARD_MEAN_RPS=%g\n"+
+			"RPS_PER_POD_NOISE_FLOOR_RPS=%d\n"+
+			"HOURLY_PROFILE_MIN_HOURS=%d\n"+
 			"DEFAULT_SCALE_UP_COOLDOWN_SECONDS=%d\n"+
 			"DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS=%d\n"+
 			"DEFAULT_MAX_STEP_SIZE=%d\n"+
@@ -221,7 +284,6 @@ func (c Config) Summary() string {
 		int(c.ReconcileInterval/time.Second),
 		int(c.HotPathHistory/time.Minute),
 		c.HotPathMinPoints,
-		int(c.ForecastHorizon/time.Minute),
 		int(c.ForecastTimeout/time.Second),
 		c.ProphetMinPoints,
 		int(c.ClassifierInterval/time.Minute),
@@ -229,6 +291,10 @@ func (c Config) Summary() string {
 		c.ClassifierMinPoints,
 		c.ClassifierHighConfidencePoints,
 		int(c.ClassifierDedup/time.Second),
+		c.ContextResolutionMinutes,
+		c.CVGuardMeanRPS,
+		c.RpsPerPodNoiseFloorRPS,
+		c.HourlyProfileMinHours,
 		int(c.DefaultScaleUpCooldown/time.Second),
 		int(c.DefaultScaleDownCooldown/time.Second),
 		c.DefaultMaxStepSize,

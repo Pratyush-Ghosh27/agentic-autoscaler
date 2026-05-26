@@ -1139,7 +1139,7 @@ else:  # flat, default
 | `SCALEUP_COOLDOWN_HARD_CEILING` | 180s | Defensive ceiling — unreachable by the current formula (cv ≥ 0 means output ≤ BASE \= 120s); retained as a guard against future constant changes |
 | `BASE_SCALEDOWN_COOLDOWN` | 180s | Cooldown at zero variance and zero periodicity |
 | `K_CV_DOWN` | 1.5 | Rate at which scale-down cooldown grows with CV |
-| `K_PERIODIC_DOWN` | 0.5 | Rate at which periodicity (hourly autocorrelation) reduces scale-down cooldown. _(In the source this constant is currently named `K_TOD_DOWN` — leftover from when the feature was called `tod_correlation`. Spec uses the new name; rename in code is tracked separately.)_ |
+| `K_PERIODIC_DOWN` | 0.5 | Rate at which periodicity (hourly autocorrelation) reduces scale-down cooldown. |
 | `SCALEDOWN_COOLDOWN_HARD_FLOOR` | 60s | Defensive floor — unreachable by the current formula (minimum formula output is 120s at cv=0, hourly\_autocorr=1); retained as a guard against future constant changes |
 | `SCALEDOWN_COOLDOWN_HARD_CEILING` | 600s | Reachable hard ceiling — bounds large-cv runaway (e.g., cv≈1.56 → 600s) |
 | `GRADUAL_RAMP_DAILY_DRIFT_FRAC` | 0.20 | Threshold for the `gradual_ramp` classification rule — fires when projected 24h drift exceeds this fraction of mean RPS. See §7 classification rule 4 for the derivation. Hardcoded because it defines what `gradual_ramp` *means* in this autoscaler; tuning it would silently shift the meaning of the pattern label. |
@@ -1206,7 +1206,7 @@ No retries within a single reconcile or classification cycle. Just wait for the 
 | `effectiveForecaster` | The forecaster name resolved by the precedence chain `spec.preferredForecaster ?? classifiedParams.preferredForecaster ?? "auto"`. | §5 preamble |
 | `current_hour_utc` | The controller's UTC hour at request time, forwarded in `context` for Prophet's `ds` anchoring. Per-request, not persisted. | §5 /recommend input |
 | `current_minute_utc` | The controller's UTC minute at request time, forwarded alongside `current_hour_utc`. Closes the F17 minute-level alignment gap. | §5 /recommend input |
-| `K_PERIODIC_DOWN` | Cooldown-down multiplier for the `periodic` pattern. (Spec uses this name; source code may still use the v1 name `K_TOD_DOWN` until the rename lands — see §7 footnote.) | §7 cooldown formula |
+| `K_PERIODIC_DOWN` | Cooldown-down multiplier for the `periodic` pattern. | §7 cooldown formula |
 
 ## **11\. Acceptance criteria**
 

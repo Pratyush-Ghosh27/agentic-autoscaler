@@ -7,6 +7,47 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class ContextPayload(BaseModel):
+    """Cold-path-computed scalar features and a 24-bin hourly profile,
+    plus the current-time fields the controller stamps at request build
+    time. The controller forwards this verbatim from
+    ``status.classifiedParams.context`` (with current_hour_utc /
+    current_minute_utc added). Forecasters consume these fields to bias
+    predictions when ``hourly_profile_valid`` is True; otherwise they
+    must ignore ``hourly_profile``.
+
+    See docs/design_v2.md §6.1 step 6.5 (computation) and §6.3
+    (forwarding contract). G10 wires this end-to-end.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    baseline_rps: int
+    """Median RPS over the cold-path history window (typically 7 days
+    at 5-min cadence)."""
+
+    peak_p95_rps: int
+    """95th-percentile RPS over the cold-path history window."""
+
+    trend_24h_slope: float
+    """24-hour rolling trend slope, units rps/min. Positive means
+    rising load (F18)."""
+
+    hourly_profile: Annotated[list[int], Field(min_length=24, max_length=24)]
+    """24-bin median-of-RPS-per-UTC-hour profile. Index 0 = 00:00 UTC,
+    index 23 = 23:00 UTC."""
+
+    hourly_profile_valid: bool
+    """True iff every UTC-hour bin had at least HOURLY_PROFILE_MIN_HOURS
+    samples; forecasters must ignore hourly_profile when False."""
+
+    current_hour_utc: Annotated[int, Field(ge=0, le=23)]
+    """Wall-clock UTC hour at request build time, 0..23."""
+
+    current_minute_utc: Annotated[int, Field(ge=0, le=59)]
+    """Wall-clock UTC minute at request build time, 0..59."""
+
+
 class RecommendRequest(BaseModel):
     """Body of POST /recommend."""
 
@@ -20,6 +61,11 @@ class RecommendRequest(BaseModel):
 
     preferred_model: Literal["prophet", "linear_extrap", "auto"] | None = None
     """Override for model selection. None or 'auto' means defer to auto-select."""
+
+    context: ContextPayload | None = None
+    """Cold-path-computed context. None means "no context" — either the
+    controller has not run a classification cycle yet, or the user has
+    engaged the autoscaling.agentic.io/skip-context annotation."""
 
     @field_validator("rps_history")
     @classmethod

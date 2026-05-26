@@ -71,3 +71,24 @@ def test_metrics_endpoint_returns_prometheus_format(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.text
     assert "forecast_prophet_failures_total" in body
+
+
+def test_v2_env_vars_have_defaults() -> None:
+    """G21, F24: every v2 env var has a sensible default so existing
+    operators upgrade without setting anything new. Pinning these as
+    module attributes lets the dispatch layer read them once and avoids
+    scattering os.environ.get calls across the codebase."""
+    from forecast import app as app_mod
+
+    assert app_mod.FORECAST_HORIZON_MINUTES == 10
+    assert app_mod.PROPHET_MIN_POINTS == 30, (
+        "F2a-revisited: lowered from 60 to 30 (Prophet self-gates short histories)"
+    )
+    assert app_mod.LINEAR_EXTRAP_RECENT_WEIGHT == 0.7
+    assert app_mod.LINEAR_EXTRAP_WINDOW_MINUTES == 10
+    assert app_mod.GBDT_QUANTILE == 0.90
+    assert app_mod.GBDT_MIN_POINTS == 30, "F24: configurable for ops tuning"
+    assert app_mod.PROPHET_USE_HOURLY_REGRESSOR is True
+    assert app_mod.HOURLY_PROFILE_MIN_HOURS == 12, (
+        "G11: mirrored on the service for context validation"
+    )

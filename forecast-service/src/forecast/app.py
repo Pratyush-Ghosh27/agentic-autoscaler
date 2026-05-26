@@ -14,10 +14,33 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from forecast.dispatch import recommend
 from forecast.models import RecommendRequest, RecommendResponse
 
-# These two values are read from env at startup. The controller and the
-# Forecast Service must keep them in sync per design §4 / §5.
+# Service-side env vars, read once at module import.
+#
+# Per F36 the forecast horizon is a Forecast Service property (not a
+# controller property): the service publishes it via every /recommend
+# response and the controller stamps that value into ExplainRequest.
+#
+# PROPHET_MIN_POINTS default lowered from 60 to 30 (F2a-revisited):
+# Prophet now learns from shorter histories; its own changepoint and
+# seasonality gates handle low-confidence cases internally.
+#
+# The remaining vars are forecaster-tuning knobs (F24, G21) plus the
+# context-validation threshold (G11). They are accessed by attribute
+# from the dispatch layer; the integration test pins their defaults.
 FORECAST_HORIZON_MINUTES = int(os.environ.get("FORECAST_HORIZON_MINUTES", "10"))
-PROPHET_MIN_POINTS = int(os.environ.get("PROPHET_MIN_POINTS", "60"))
+PROPHET_MIN_POINTS = int(os.environ.get("PROPHET_MIN_POINTS", "30"))
+LINEAR_EXTRAP_RECENT_WEIGHT = float(
+    os.environ.get("LINEAR_EXTRAP_RECENT_WEIGHT", "0.7")
+)
+LINEAR_EXTRAP_WINDOW_MINUTES = int(
+    os.environ.get("LINEAR_EXTRAP_WINDOW_MINUTES", "10")
+)
+GBDT_QUANTILE = float(os.environ.get("GBDT_QUANTILE", "0.90"))
+GBDT_MIN_POINTS = int(os.environ.get("GBDT_MIN_POINTS", "30"))
+PROPHET_USE_HOURLY_REGRESSOR = (
+    os.environ.get("PROPHET_USE_HOURLY_REGRESSOR", "true").lower() == "true"
+)
+HOURLY_PROFILE_MIN_HOURS = int(os.environ.get("HOURLY_PROFILE_MIN_HOURS", "12"))
 
 
 @asynccontextmanager

@@ -590,6 +590,149 @@ var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
 			"old LastScaleTime must not falsely gate fresh scale-up decisions")
 		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("scale_up")))
 	})
+
+	It("forwards classifier context to the Forecast Service when present (G10)", func() {
+		const dep = "ctx-fwd-deploy"
+		const cr = "ctx-fwd-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// Pre-populate status.classifiedParams.context so the reconciler
+		// has something to forward. Status is a sub-resource so we
+		// fetch, mutate, and Update via Status().
+		got := fetch(ctx, ns, cr)
+		hourly := make([]int32, 24)
+		for i := range hourly {
+			hourly[i] = int32(50 + i)
+		}
+		got.Status.ClassifiedParams = &autoscalingv1alpha1.ClassifiedParams{
+			Pattern:                  "periodic",
+			ScaleUpCooldownSeconds:   60,
+			ScaleDownCooldownSeconds: 180,
+			MaxStepSize:              4,
+			PreferredForecaster:      "prophet",
+			Confidence:               "high",
+			HistoryPoints:            288,
+			ClassifiedAt:             metav1.Time{Time: time.Now().UTC()},
+			Context: &autoscalingv1alpha1.ContextFields{
+				BaselineRPS:        100,
+				PeakP95RPS:         500,
+				Trend24hSlope:      0.25,
+				HourlyProfile:      hourly,
+				HourlyProfileValid: true,
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
+
+		// Sanity: confirm the status was actually persisted before we
+		// reconcile. Without this assertion a stale-Get bug would
+		// look like "controller doesn't forward Context" — same RED
+		// failure mode for two very different root causes.
+		Eventually(func() *autoscalingv1alpha1.ContextFields {
+			refetched := fetch(ctx, ns, cr)
+			if refetched.Status.ClassifiedParams == nil {
+				return nil
+			}
+			return refetched.Status.ClassifiedParams.Context
+		}, "2s", "50ms").ShouldNot(BeNil(),
+			"status.classifiedParams.context must be persisted before reconcile")
+
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1000, ModelUsed: "prophet"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		req := fc.lastRequest()
+		Expect(req).NotTo(BeNil())
+		Expect(req.Context).NotTo(BeNil(), "Context must be non-nil when status has it")
+		Expect(req.Context.BaselineRPS).To(Equal(int32(100)))
+		Expect(req.Context.PeakP95RPS).To(Equal(int32(500)))
+		Expect(req.Context.Trend24hSlope).To(BeNumerically("~", 0.25, 0.0001))
+		Expect(req.Context.HourlyProfile).To(HaveLen(24))
+		Expect(req.Context.HourlyProfileValid).To(BeTrue())
+		// CurrentHourUTC and CurrentMinuteUTC are the controller's clock.
+		Expect(req.Context.CurrentHourUTC).To(BeNumerically(">=", int32(0)))
+		Expect(req.Context.CurrentHourUTC).To(BeNumerically("<=", int32(23)))
+		Expect(req.Context.CurrentMinuteUTC).To(BeNumerically(">=", int32(0)))
+		Expect(req.Context.CurrentMinuteUTC).To(BeNumerically("<=", int32(59)))
+	})
+
+	It("omits Context when status has no classifiedParams (cold start, G10)", func() {
+		const dep = "ctx-cold-deploy"
+		const cr = "ctx-cold-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1000, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		req := fc.lastRequest()
+		Expect(req).NotTo(BeNil())
+		Expect(req.Context).To(BeNil(),
+			"cold start (no classifiedParams) ⇒ Context must be nil so JSON omits the field")
+	})
+
+	It("respects the skip-context annotation and sends nil Context (G10)", func() {
+		const dep = "ctx-skip-deploy"
+		const cr = "ctx-skip-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep, func(a *autoscalingv1alpha1.AgenticAutoscaler) {
+			a.Annotations = map[string]string{
+				"autoscaling.agentic.io/skip-context": "true",
+			}
+		})
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// Status has Context, but the annotation should override.
+		got := fetch(ctx, ns, cr)
+		got.Status.ClassifiedParams = &autoscalingv1alpha1.ClassifiedParams{
+			Pattern:                  "periodic",
+			ScaleUpCooldownSeconds:   60,
+			ScaleDownCooldownSeconds: 180,
+			MaxStepSize:              4,
+			PreferredForecaster:      "prophet",
+			Confidence:               "high",
+			HistoryPoints:            288,
+			ClassifiedAt:             metav1.Time{Time: time.Now().UTC()},
+			Context: &autoscalingv1alpha1.ContextFields{
+				BaselineRPS: 100, PeakP95RPS: 200,
+				HourlyProfile: make([]int32, 24), HourlyProfileValid: true,
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
+
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1000, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		req := fc.lastRequest()
+		Expect(req).NotTo(BeNil())
+		Expect(req.Context).To(BeNil(),
+			"skip-context annotation must override the status context block")
+	})
 })
 
 // -----------------------------------------------------------------------

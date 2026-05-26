@@ -5,6 +5,7 @@ Copyright 2026.
 package classifier_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +17,13 @@ import (
 // Priority-ordered classification — first match wins.
 // -----------------------------------------------------------------------
 
+// TestClassify_PriorityOrder pins the v2 priority-ordered pattern rules.
+//
+// Note: Classify(f) is implemented as ClassifyWithMean(f, 1.0). The
+// gradual_ramp branch is therefore very sensitive (any |slope| above
+// 0.20/1440 ≈ 1.4e-4 fires it). Production code calls
+// ClassifyWithMean(f, realMean) which gives a calibrated threshold;
+// this test pins the single-arg helper's semantics. F26 + G11.
 func TestClassify_PriorityOrder(t *testing.T) {
 	cases := []struct {
 		name string
@@ -23,17 +31,17 @@ func TestClassify_PriorityOrder(t *testing.T) {
 		want string
 	}{
 		{
-			"flat wins at low cv",
+			"flat wins at low cv even with high slope",
 			classifier.Features{CV: 0.05, TodCorrelation: 0.8, PeakToTrough: 6, TrendSlope: 3},
 			classifier.PatternFlat,
 		},
 		{
-			"periodic wins over spiky",
+			"periodic wins over spiky regardless of slope",
 			classifier.Features{CV: 0.60, TodCorrelation: 0.75, PeakToTrough: 6, TrendSlope: 0},
 			classifier.PatternPeriodic,
 		},
 		{
-			"spiky needs cv>0.50 AND pt>5",
+			"spiky needs cv>0.50 AND pt>5 (zero slope so ramp does not pre-empt)",
 			classifier.Features{CV: 0.60, TodCorrelation: 0.3, PeakToTrough: 6, TrendSlope: 0},
 			classifier.PatternSpiky,
 		},
@@ -48,8 +56,10 @@ func TestClassify_PriorityOrder(t *testing.T) {
 			classifier.PatternGradualRamp,
 		},
 		{
-			"default fallthrough",
-			classifier.Features{CV: 0.20, TodCorrelation: 0.3, PeakToTrough: 2, TrendSlope: 1.0},
+			// At mean=1.0 the daily-drift fraction is |slope|*1440;
+			// to stay in `default` the slope must be below ≈1.4e-4.
+			"default fallthrough requires near-zero slope at mean=1",
+			classifier.Features{CV: 0.20, TodCorrelation: 0.3, PeakToTrough: 2, TrendSlope: 1e-5},
 			classifier.PatternDefault,
 		},
 	}
@@ -96,13 +106,16 @@ func TestClassify_Boundaries(t *testing.T) {
 			classifier.PatternDefault,
 		},
 		{
-			"slope exactly 2.0 is NOT ramp",
-			classifier.Features{CV: 0.15, TodCorrelation: 0.1, PeakToTrough: 2, TrendSlope: 2.0},
+			// v2 (F26): with mean=1, the threshold is |slope|*1440 > 0.20,
+			// so even tiny slopes fire the ramp rule. Below the boundary
+			// (|slope| ≤ 0.20/1440 ≈ 1.388e-4) we stay in `default`.
+			"slope just at the relative-threshold boundary stays default",
+			classifier.Features{CV: 0.15, TodCorrelation: 0.1, PeakToTrough: 2, TrendSlope: 1.388e-4},
 			classifier.PatternDefault,
 		},
 		{
-			"slope just above 2.0 IS ramp",
-			classifier.Features{CV: 0.15, TodCorrelation: 0.1, PeakToTrough: 2, TrendSlope: 2.01},
+			"slope just above the relative-threshold boundary IS ramp",
+			classifier.Features{CV: 0.15, TodCorrelation: 0.1, PeakToTrough: 2, TrendSlope: 1.4e-4},
 			classifier.PatternGradualRamp,
 		},
 		{
@@ -138,8 +151,72 @@ func TestClassify_OnSyntheticFixtures(t *testing.T) {
 		t.Run(tc.fixture, func(t *testing.T) {
 			series := loadSeries(t, tc.fixture)
 			f := classifier.ExtractFeatures(series)
-			assert.Equal(t, tc.want, classifier.Classify(f),
-				"features=%+v", f)
+			// Use the v2 entry point with the real series mean so the
+			// gradual_ramp threshold is calibrated to the workload.
+			seriesMean := mean(series)
+			assert.Equal(t, tc.want, classifier.ClassifyWithMean(f, seriesMean),
+				"features=%+v mean=%v", f, seriesMean)
 		})
 	}
+}
+
+// mean is a tiny helper kept inside the test package to avoid pulling
+// any dependency into the production package surface.
+func mean(s []float64) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, v := range s {
+		sum += v
+	}
+	return sum / float64(len(s))
+}
+
+// -----------------------------------------------------------------------
+// ClassifyWithMean — v2 relative-threshold gradual_ramp rule (F26)
+// -----------------------------------------------------------------------
+
+// TestClassifyWithMean_GradualRampRelativeThreshold pins F26: a slope
+// that drifts more than GradualRampDailyDriftFrac of the workload's
+// mean over 24 hours is `gradual_ramp`. At mean=100 with slope=0.015
+// the daily drift is 0.015*1440/100 = 0.216 > 0.20 → ramp.
+func TestClassifyWithMean_GradualRampRelativeThreshold(t *testing.T) {
+	f := classifier.Features{CV: 0.30, PeakToTrough: 2.0, TodCorrelation: 0.20, TrendSlope: 0.015}
+	got := classifier.ClassifyWithMean(f, 100.0)
+	assert.Equal(t, classifier.PatternGradualRamp, got,
+		"daily drift = 0.015*1440/100 = 0.216 > 0.20 should fire ramp")
+
+	// Sanity: the same slope is well below the legacy absolute-2.0
+	// threshold, so this is a real behavioural change (F26).
+	if math.Abs(f.TrendSlope) > 2.0 {
+		t.Fatal("test setup error: slope should be below the legacy absolute threshold")
+	}
+}
+
+// TestClassifyWithMean_HighMeanWidensTolerance pins the symmetric
+// case: at high mean, a slope that *was* a ramp under the absolute
+// rule is no longer a ramp because the relative drift is small.
+//
+//	mean=10000, slope=0.5 → 0.5*1440/10000 = 0.072 < 0.20 → default.
+func TestClassifyWithMean_HighMeanWidensTolerance(t *testing.T) {
+	f := classifier.Features{CV: 0.20, PeakToTrough: 2.0, TodCorrelation: 0.20, TrendSlope: 0.5}
+	got := classifier.ClassifyWithMean(f, 10000.0)
+	assert.Equal(t, classifier.PatternDefault, got,
+		"daily drift 0.072 must NOT fire ramp at mean=10k under v2 rule")
+}
+
+// TestClassifyWithMean_NegativeSlopeAlsoFires pins symmetry: the
+// relative threshold uses |slope| so falling traffic also classifies
+// as ramp when the magnitude exceeds the threshold.
+func TestClassifyWithMean_NegativeSlopeAlsoFires(t *testing.T) {
+	f := classifier.Features{CV: 0.30, PeakToTrough: 2.0, TodCorrelation: 0.20, TrendSlope: -0.020}
+	got := classifier.ClassifyWithMean(f, 100.0)
+	assert.Equal(t, classifier.PatternGradualRamp, got)
+}
+
+// TestGradualRampDailyDriftFracExposed pins the threshold constant so
+// runbooks / operators can reference it by name.
+func TestGradualRampDailyDriftFracExposed(t *testing.T) {
+	assert.InDelta(t, 0.20, classifier.GradualRampDailyDriftFrac, 0.0001)
 }

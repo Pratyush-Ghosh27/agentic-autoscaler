@@ -14,22 +14,22 @@
 
 | Plan item | Tasks | Source |
 | --- | --- | --- |
-| **G10** — Context plumbed end-to-end | T1, T2, T3, T13, T14, T15, T16 | gap-report-v2.md G10 |
-| **G11** — Cold path at 5-min cadence + new features + raised thresholds | T7, T8, T9, T10, T11, T12, T13 | gap-report-v2.md G11 |
-| **G21** — Env-var defaults realignment | T4, T5, T6, T14 | gap-report-v2.md G21 |
+| **G10** — Context plumbed end-to-end | T1, T2, T3, T11, T12, T14, T15 | gap-report-v2.md G10 |
+| **G11** — Cold path at 5-min cadence + new features + raised thresholds | T7, T8, T9, T10, T11, T12 | gap-report-v2.md G11 |
+| **G21** — Env-var defaults realignment | T4, T5, T13 | gap-report-v2.md G21 |
 | **F2a-revisited** — `MIN_POINTS=72`, `HIGH_CONFIDENCE_POINTS=240` | T4 | v2_revision notes F2a-revisited |
-| **F4a** — autocorr lag = `60 / DOWNSAMPLE_RESOLUTION_MIN` | T8 | v2_revision notes F4a |
-| **F13** — `KTodDown` → `KPeriodicDown` rename in code | T7 | v2_revision notes F13 |
-| **F18** — `trend_24h_slope` units = rps/min | T11 | v2_revision notes F18 |
-| **F23** — `RPS_PER_POD_NOISE_FLOOR_RPS` env var | T14 | v2_revision notes F23 |
+| **F4a** — autocorr lag = `60 / DOWNSAMPLE_RESOLUTION_MIN` | T7 | v2_revision notes F4a |
+| **F13** — `KTodDown` → `KPeriodicDown` rename in code | T6 | v2_revision notes F13 |
+| **F18** — `trend_24h_slope` units = rps/min | T10 | v2_revision notes F18 |
+| **F23** — `RPS_PER_POD_NOISE_FLOOR_RPS` env var | T13 | v2_revision notes F23 |
 | **F24** — `GBDT_MIN_POINTS` env var | T5 | v2_revision notes F24 |
-| **F26** — `gradual_ramp` relative threshold | T10 | v2_revision notes F26 |
-| **F28** — `peak_to_trough` denominator `max(mean, 1.0)` | T9 | v2_revision notes F28 |
-| **F29** — name `CV_GUARD_MEAN_RPS` | T9 | v2_revision notes F29 |
+| **F26** — `gradual_ramp` relative threshold | T9 | v2_revision notes F26 |
+| **F28** — `peak_to_trough` denominator `max(mean, 1.0)` | T8 | v2_revision notes F28 |
+| **F29** — name `CV_GUARD_MEAN_RPS` | T8 | v2_revision notes F29 |
 | **F32c** — `CV_GUARD_MEAN_RPS` env-tunable | T4 | v2_revision notes F32c |
 | **F36** — `FORECAST_HORIZON_MINUTES` service-only | T4 | v2_revision notes F36 |
-| **E1** — remove `K_TOD_DOWN` disclaimer | T17 | v2-spec-revision-plan.md E1 |
-| **E3** — F2a-revisited prose tightening | T18 | v2-spec-revision-plan.md E3 |
+| **E1** — remove `K_TOD_DOWN` disclaimer | T16 | v2-spec-revision-plan.md E1 |
+| **E3** — F2a-revisited prose tightening | T17 | v2-spec-revision-plan.md E3 |
 
 ---
 

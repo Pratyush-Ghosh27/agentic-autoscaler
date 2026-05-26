@@ -12,6 +12,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual lever — re-run CI against a specific SHA without pushing an
+  # empty commit. Useful when (a) a GitHub webhook gets dropped or
+  # delayed (e.g. during an Actions incident), (b) a transient runner
+  # failure needs a re-attempt, or (c) you're debugging this workflow.
+  workflow_dispatch:
 
 permissions:
   contents: read

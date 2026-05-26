@@ -68,3 +68,86 @@ func TestRunPipeline_FlatBoundaryFixture(t *testing.T) {
 	assert.Equal(t, classifier.PatternFlat, result.Pattern)
 	assert.Equal(t, classifier.ConfidenceMedium, result.Confidence)
 }
+
+// -----------------------------------------------------------------------
+// RunPipelineV2 — context-bearing pipeline (G10 + G11)
+// -----------------------------------------------------------------------
+
+// TestRunPipelineV2_ReturnsContext pins G10/G11: the v2 pipeline
+// produces a populated Context block alongside the legacy
+// PipelineResult, ready for the worker to write to status.
+func TestRunPipelineV2_ReturnsContext(t *testing.T) {
+	// 100 points of ~50 RPS with a small periodic wobble.
+	series := make([]float64, 100)
+	for i := range series {
+		series[i] = float64(50 + i%10)
+	}
+	cfg := classifier.PipelineConfig{
+		ResolutionMin:         5,
+		HourlyProfileMinHours: 12,
+		CVGuardMeanRPS:        1.0,
+		StartHourUTC:          0,
+	}
+	result, err := classifier.RunPipelineV2(series, 240, 72, 1, 10, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, result.Context)
+	assert.NotZero(t, result.Context.BaselineRPS, "non-trivial series ⇒ non-zero baseline")
+	assert.NotZero(t, result.Context.PeakP95RPS, "non-trivial series ⇒ non-zero peak p95")
+	assert.Len(t, result.Context.HourlyProfile, 24)
+	// 100 points at 5-min cadence ≈ 8h20m, well below the 12h gate.
+	assert.False(t, result.Context.HourlyProfileValid,
+		"100 points ≈ 8h coverage must NOT pass the 12-hour gate")
+}
+
+// TestRunPipelineV2_PreservesLegacyResult: the embedded
+// PipelineResult is populated identically to RunPipeline at the v1
+// cadence (resolution=1), so existing pipeline semantics are pinned.
+func TestRunPipelineV2_PreservesLegacyResult(t *testing.T) {
+	series := loadSeries(t, "periodic_1440.json")
+	cfg := classifier.PipelineConfig{
+		ResolutionMin:         1,
+		HourlyProfileMinHours: 12,
+		CVGuardMeanRPS:        1.0,
+		StartHourUTC:          0,
+	}
+	v2, err := classifier.RunPipelineV2(series, 240, 70, 2, 10, cfg)
+	require.NoError(t, err)
+	v1, err := classifier.RunPipeline(series, 240, 70, 2, 10)
+	require.NoError(t, err)
+	assert.Equal(t, v1.Pattern, v2.Pattern)
+	assert.Equal(t, v1.Confidence, v2.Confidence)
+	assert.Equal(t, v1.HistoryPoints, v2.HistoryPoints)
+}
+
+// TestRunPipelineV2_InsufficientPoints: same gate as v1, returns
+// ErrInsufficientPoints with no context.
+func TestRunPipelineV2_InsufficientPoints(t *testing.T) {
+	series := make([]float64, 21) // below v2 default floor of 22
+	cfg := classifier.PipelineConfig{
+		ResolutionMin:         5,
+		HourlyProfileMinHours: 12,
+		CVGuardMeanRPS:        1.0,
+	}
+	_, err := classifier.RunPipelineV2(series, 240, 22, 1, 10, cfg)
+	assert.ErrorIs(t, err, classifier.ErrInsufficientPoints)
+}
+
+// TestRunPipelineV2_24hCoverageIsValid: 288 points at 5-min cadence
+// covers exactly 24h and the hourly profile is marked valid.
+func TestRunPipelineV2_24hCoverageIsValid(t *testing.T) {
+	series := make([]float64, 288)
+	for i := range series {
+		series[i] = float64(50 + (i/12)%24)
+	}
+	cfg := classifier.PipelineConfig{
+		ResolutionMin:         5,
+		HourlyProfileMinHours: 12,
+		CVGuardMeanRPS:        1.0,
+		StartHourUTC:          0,
+	}
+	result, err := classifier.RunPipelineV2(series, 240, 72, 1, 10, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, result.Context)
+	assert.True(t, result.Context.HourlyProfileValid,
+		"24h of 5-min data must satisfy the 12-hour-min-coverage gate")
+}

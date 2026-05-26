@@ -238,3 +238,103 @@ func TestTrendSlopeRpsPerMin_DefendsBadResolution(t *testing.T) {
 	got := classifier.TrendSlopeRpsPerMin(series, 0)
 	assert.InDelta(t, 5.0, got, 0.001, "raw rps/sample on bad resolution")
 }
+
+// -----------------------------------------------------------------------
+// Context-field computations — G10 + G11
+// -----------------------------------------------------------------------
+
+// TestComputeBaselineRPS pins G10: the baseline is the median of the
+// cold-path history, rounded to int rps. Median (not mean) so a few
+// outliers don't shift the baseline.
+func TestComputeBaselineRPS(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []float64
+		want int32
+	}{
+		{"odd-length sorted", []float64{10, 20, 30, 40, 50}, 30},
+		{"even-length sorted", []float64{10, 20, 30, 40}, 25},
+		{"unsorted", []float64{50, 10, 30, 20, 40}, 30},
+		{"with outlier", []float64{10, 10, 10, 10, 1000}, 10},
+		{"empty", []float64{}, 0},
+		{"single", []float64{42}, 42},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, classifier.ComputeBaselineRPS(tc.in))
+		})
+	}
+}
+
+// TestComputePeakP95RPS pins G10: the peak is the 95th percentile,
+// rounded to int rps. Resistant to a single max-outlier (unlike max())
+// while still catching realistic peaks.
+func TestComputePeakP95RPS(t *testing.T) {
+	series := make([]float64, 100)
+	for i := range series {
+		series[i] = float64(i + 1) // 1..100
+	}
+	got := classifier.ComputePeakP95RPS(series)
+	// percentile() uses idx = ceil(0.95*100)-1 = 94 → series[94] = 95.
+	assert.Equal(t, int32(95), got)
+}
+
+func TestComputePeakP95RPS_Empty(t *testing.T) {
+	assert.Equal(t, int32(0), classifier.ComputePeakP95RPS(nil))
+}
+
+// TestComputeHourlyProfile pins G11: the 24-bin profile records the
+// median RPS per UTC hour. With 288 points at 5-min cadence (24h
+// exactly) every bin is filled and the result is valid.
+func TestComputeHourlyProfile(t *testing.T) {
+	series := make([]float64, 288)
+	for i := range series {
+		// Simulate a daily wave: each hour gets a distinct RPS level.
+		// 12 points per hour at 5-min cadence.
+		series[i] = float64((i/12)%24) * 10
+	}
+	profile, valid := classifier.ComputeHourlyProfile(series, 5, 0, 12)
+	assert.Len(t, profile, 24)
+	assert.True(t, valid, "288 points covering all 24 hours must be valid")
+	// Hour 0 → 0; hour 5 → 50; hour 23 → 230.
+	assert.Equal(t, int32(0), profile[0])
+	assert.Equal(t, int32(50), profile[5])
+	assert.Equal(t, int32(230), profile[23])
+}
+
+// TestComputeHourlyProfile_PartialCoverageInvalid: a series shorter
+// than 24h shouldn't claim a valid profile.
+func TestComputeHourlyProfile_PartialCoverageInvalid(t *testing.T) {
+	series := make([]float64, 60) // 5h at 5-min cadence
+	for i := range series {
+		series[i] = float64(i)
+	}
+	profile, valid := classifier.ComputeHourlyProfile(series, 5, 0, 12)
+	assert.Len(t, profile, 24)
+	assert.False(t, valid, "5h coverage must NOT pass the 12-hour gate")
+}
+
+// TestComputeHourlyProfile_StartHourOffset: a series that starts at
+// 09:00 UTC should land in profile[9..], wrapping to profile[0..] only
+// after crossing midnight.
+func TestComputeHourlyProfile_StartHourOffset(t *testing.T) {
+	// 12 points (1h at 5-min) all RPS=42, starting at hour=9.
+	series := make([]float64, 12)
+	for i := range series {
+		series[i] = 42
+	}
+	profile, _ := classifier.ComputeHourlyProfile(series, 5, 9, 1)
+	assert.Equal(t, int32(42), profile[9], "hour-9 bucket must hold the data")
+	assert.Equal(t, int32(0), profile[10], "hour-10 must be empty (no data)")
+	assert.Equal(t, int32(0), profile[8], "hour-8 must be empty (no data)")
+}
+
+// TestComputeHourlyProfile_DefendsBadResolution: with resolutionMin <=0
+// we degrade to "every sample is its own hour bucket" by treating
+// pointsPerHour as 1. The function never panics or div-by-zeros.
+func TestComputeHourlyProfile_DefendsBadResolution(t *testing.T) {
+	series := []float64{1, 2, 3, 4, 5}
+	profile, valid := classifier.ComputeHourlyProfile(series, 0, 0, 12)
+	assert.Len(t, profile, 24)
+	assert.False(t, valid)
+}

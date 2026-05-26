@@ -178,6 +178,91 @@ func percentile(s []float64, p float64) float64 {
 	return sorted[idx]
 }
 
+// median returns the middle value of the series (mean of the two
+// middle values for even-length series). Used by the cold-path
+// context computations (baseline_rps, hourly_profile per-bin) where
+// outlier resistance is more important than mean's smoothness.
+func median(s []float64) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(s))
+	copy(sorted, s)
+	sort.Float64s(sorted)
+	n := len(sorted)
+	if n%2 == 0 {
+		return (sorted[n/2-1] + sorted[n/2]) / 2
+	}
+	return sorted[n/2]
+}
+
+// -----------------------------------------------------------------------
+// Context-field producers — G10 + G11
+// -----------------------------------------------------------------------
+
+// ComputeBaselineRPS returns the median RPS over the cold-path
+// history window, rounded to int. Used as `baseline_rps` in the
+// status `context` block. Median (not mean) so a few outliers don't
+// shift the baseline. G10.
+func ComputeBaselineRPS(series []float64) int32 {
+	return int32(math.Round(median(series)))
+}
+
+// ComputePeakP95RPS returns the 95th-percentile RPS, rounded to int.
+// Used as `peak_p95_rps` in the status `context` block. p95 (not
+// max) is robust to a single freak burst while still capturing
+// realistic recurring peaks. G10.
+func ComputePeakP95RPS(series []float64) int32 {
+	return int32(math.Round(percentile(series, 0.95)))
+}
+
+// ComputeHourlyProfile returns a 24-bin median-of-RPS-per-UTC-hour
+// profile and a validity flag. The series is bucketed by
+// (sampleIndex / pointsPerHour + startHourUTC) mod 24, so the caller
+// must supply the wall-clock hour of series[0] in startHourUTC.
+//
+// `valid` is true iff at least minHours distinct hours had at least
+// one sample. Forecasters consume `hourly_profile` only when valid is
+// true; otherwise they ignore it.
+//
+// Defends against resolutionMin <= 0 by treating pointsPerHour as 1
+// (effectively "every sample is its own hour bucket"); the function
+// never panics or div-by-zeros. config.validate() catches the bad
+// config in production. G11.
+func ComputeHourlyProfile(series []float64, resolutionMin, startHourUTC, minHours int) ([]int32, bool) {
+	profile := make([]int32, 24)
+	if len(series) == 0 {
+		return profile, false
+	}
+	if resolutionMin < 1 {
+		// Defensive: a misconfigured caller would otherwise divide by
+		// zero. Treating each sample as one hour bucket degrades
+		// gracefully — config.validate() catches this in production.
+		resolutionMin = 60
+	}
+	pointsPerHour := 60 / resolutionMin
+	if pointsPerHour < 1 {
+		pointsPerHour = 1
+	}
+	if startHourUTC < 0 {
+		startHourUTC = 0
+	}
+	buckets := make([][]float64, 24)
+	for i, v := range series {
+		hourOffset := i / pointsPerHour
+		hour := (startHourUTC + hourOffset) % 24
+		buckets[hour] = append(buckets[hour], v)
+	}
+	distinctHours := 0
+	for h := 0; h < 24; h++ {
+		if len(buckets[h]) > 0 {
+			profile[h] = int32(math.Round(median(buckets[h])))
+			distinctHours++
+		}
+	}
+	return profile, distinctHours >= minHours
+}
+
 func todCorrelation(series []float64, lag, minOverlap int) float64 {
 	n := len(series)
 	if n < lag+minOverlap {

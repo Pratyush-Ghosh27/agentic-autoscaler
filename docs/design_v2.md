@@ -855,7 +855,13 @@ No retry within a single classification cycle. If the Prometheus query fails, lo
 
 ### **6.2 ExplainWorker**
 
-Triggered by the reconciler after any event that changes replicas. The triggering reasoning tokens are `scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, and (when replicas also changed this reconcile) `max_replicas_binding` / `min_replicas_binding`. Cap-limited scales still change replica count and warrant explanation. `cooldown_holding_*` events do not trigger ExplainWorker because step 7 sets `target = current_replicas` and step 8's hysteresis guard then skips the `/scale` patch — the trigger criterion (replica change) is not met, even though the diagnostic K8s event itself is still emitted (see §5 precedence rule 4). `max_replicas_binding` / `min_replicas_binding` events that fire **without** a replica change (i.e., the workload is already at the bound) emit the K8s Event for visibility but do not trigger ExplainWorker — prose explanation of "you're at the cap" is low-signal compared to the bare-fact event. The ExplainWorker always starts — no API key gate. If Ollama is unreachable or the model is not pulled, each failed call is logged and the controller continues normally; the next replica-changing event will trigger a fresh attempt.
+**Trigger rules:**
+
+- **Triggering tokens:** `scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, and (when replicas also changed this reconcile) `max_replicas_binding` / `min_replicas_binding`.
+- **Cap-limited scales** still change replica count and warrant explanation.
+- **`cooldown_holding_*` exclusion:** These events do not trigger ExplainWorker because step 7 sets `target = current_replicas` and step 8's hysteresis guard skips the `/scale` patch — the trigger criterion (replica change) is not met, even though the diagnostic K8s event itself is still emitted (see §5 precedence rule 4).
+- **Binding without replica change exclusion:** `max_replicas_binding` / `min_replicas_binding` events that fire **without** a replica change (i.e., the workload is already at the bound) emit the K8s Event for visibility but do not trigger ExplainWorker — prose explanation of "you're at the cap" is low-signal compared to the bare-fact event.
+- **ExplainWorker always starts** — no API key gate. If Ollama is unreachable or the model is not pulled, each failed call is logged and the controller continues normally; the next replica-changing event triggers a fresh attempt.
 
 #### **Channel semantics — drop-and-replace**
 

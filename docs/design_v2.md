@@ -567,7 +567,19 @@ Output: `{ predicted_rps: float, horizon_minutes: int, model_used: str }`
 
 `preferred_model` absent, null, or `"auto"` leaves auto-selection untouched. All three forecasters accept `(rps_history, context)` and return the same response shape. `context` may be `None`.
 
-Note: `auto` mode never returns `gbdt_quantile`. Auto-selection only ever picks Prophet (when `len(rps_history) >= PROPHET_MIN_POINTS`) or falls back to linear extrapolation. The GBDT path is intentionally opt-in — it runs only when the classifier writes `preferredForecaster: "gbdt_quantile"` (driven by `pattern == "spiky"`; see §7) or when an operator explicitly sets `spec.preferredForecaster: "gbdt_quantile"` on the CR. This keeps the cold-path classifier in charge of when "spiky workload, predict-the-burst" semantics apply, rather than letting the Forecast Service infer it from `rps_history` alone.
+### **Auto-mode selection rules**
+
+When `preferred_model` is absent, null, or `"auto"`, the Forecast Service selects a model as follows:
+
+1. If `len(rps_history) >= PROPHET_MIN_POINTS` (default 30): use `forecast_prophet`. On Prophet failure, fall back to `forecast_linear_extrap`.
+2. Otherwise: use `forecast_linear_extrap`.
+
+**`auto` mode never returns `gbdt_quantile`.** The GBDT path is intentionally opt-in — it runs only when one of:
+
+- The classifier writes `preferredForecaster: "gbdt_quantile"` (driven by `pattern == "spiky"`; see §7), or
+- An operator explicitly sets `spec.preferredForecaster: "gbdt_quantile"` on the CR.
+
+This keeps the cold-path classifier in charge of when "spiky workload, predict-the-burst" semantics apply, rather than letting the Forecast Service infer it from `rps_history` alone.
 
 ### **forecast\_linear\_extrap**
 

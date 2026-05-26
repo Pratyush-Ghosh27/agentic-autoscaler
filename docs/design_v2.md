@@ -213,6 +213,8 @@ Optional spec fields: `minReplicas`, `maxReplicas`, `rpsPerPodMin`, `rpsPerPodMa
 * `hourlyProfile`: length-24 array indexed by UTC hour-of-day; each value is the median RPS observed in that hour across the full window. Hours with no data are stored as 0.0 (see `hourlyProfileValid` for whether this should be trusted)  
 * `hourlyProfileValid`: `true` if at least `HOURLY_PROFILE_MIN_HOURS` distinct UTC hours had any observations; `false` otherwise. When `false`, downstream consumers ignore `hourlyProfile` and use other context fields only
 
+_(See §6.2 "Field provenance" table for how the `context` fields flow to ExplainWorker.)_
+
 Admission webhook: the controller registers a validating admission webhook for `AgenticAutoscaler` that rejects Create and Update requests when:
 
 * `minReplicas < 1`  
@@ -926,6 +928,32 @@ The reconciler populates these fields from the values it has at the time of the 
 | `EffectiveCooldownDown` | Resolved in reconcile preamble |
 | `EffectiveMaxStep` | Resolved in reconcile preamble |
 
+#### **Field provenance (cross-reference)**
+
+This table maps each `ExplainRequest` field to its canonical source in §4 (CRD status) and §7 (features), so a contributor adding a new prompt token knows exactly where to read each value from.
+
+| ExplainRequest field | Source in §4 status | Source in §7 features |
+| --- | --- | --- |
+| `ReasoningToken` | — (computed in reconcile step 10) | — |
+| `CurrentRPS` | — (Prometheus query result) | — |
+| `PredictedRPS` | — (Forecast Service response) | — |
+| `CurrentReplicas` | — (Deployment status) | — |
+| `RecommendedReplicas` | `status.recommendedReplicas` | — |
+| `UnboundedRecommended` | `status.unboundedRecommended` | — |
+| `TargetReplicas` | — (post-cap reconcile local) | — |
+| `MaxReplicas` | `spec.maxReplicas` | — |
+| `MinReplicas` | `spec.minReplicas` | — |
+| `HorizonMinutes` | — (Forecast Service response) | — |
+| `ModelUsed` | — (Forecast Service response) | — |
+| `Pattern` | `status.classifiedParams.pattern` | §7 classification output |
+| `Confidence` | `status.classifiedParams.confidence` | — |
+| `BaselineRPS` | `status.classifiedParams.context.baselineRPS` | §6.1 step 6.5 |
+| `PeakP95RPS` | `status.classifiedParams.context.peakP95RPS` | §6.1 step 6.5 |
+| `HourlyProfileValid` | `status.classifiedParams.context.hourlyProfileValid` | §6.1 step 6.5 |
+| `EffectiveCooldownUp` | — (reconcile preamble) | — |
+| `EffectiveCooldownDown` | — (reconcile preamble) | — |
+| `EffectiveMaxStep` | — (reconcile preamble) | — |
+
 #### **Prompt sent to Ollama**
 
 The prompt is split into a system message (persona) and a user message (data) — the standard chat-API pattern.
@@ -998,6 +1026,8 @@ On success, emit a K8s Event:
 ### **Features**
 
 Computed over the full available history (up to `CLASSIFIER_HISTORY_HOURS * 60 / CONTEXT_DOWNSAMPLE_RESOLUTION_MIN` points; default 288).
+
+_(Several of these features also appear as `ExplainRequest` fields — see §6.2 "Field provenance".)_
 
 | Feature | Formula | What it captures |
 | ----- | ----- | ----- |

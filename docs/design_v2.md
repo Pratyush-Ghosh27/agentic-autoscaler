@@ -1186,3 +1186,24 @@ The reconciler omits the `context` field in `/recommend` entirely when `status.c
 | Controller restarts with persisted `status.rpsPerPodCurrent` outside `[rpsPerPodMin, rpsPerPodMax]` | Seed the ring buffer with the persisted value regardless (it represents observed reality, not operator bounds). The bounds only constrain the `rpsPerPod` value used by the scaling formula, not what the ring buffer stores. Subsequent fresh observations converge the median back inside bounds. |
 
 No retries within a single reconcile or classification cycle. Just wait for the next trigger. The kill-switch path (annotation set to true) is specified in §5 step 1\.
+
+## **10\. Glossary**
+
+| Term | Definition | Defined in |
+| ----- | ----- | ----- |
+| `baseline_rps` / `baselineRPS` | Median RPS over the full classifier window. | §6.1 step 6.5 |
+| `peak_p95_rps` / `peakP95RPS` | 95th-percentile RPS over the full classifier window. | §6.1 step 6.5 |
+| `hourly_autocorr` | Pearson correlation of the series with its lag-`L` shift, where `L = 60 / CONTEXT_DOWNSAMPLE_RESOLUTION_MIN` points (default 12). Returns 0 when `len(series) < L + 10`. | §7 Features |
+| `trend_24h_slope` / `trend24hSlope` / `trend_slope` | Least-squares slope in **rps/min** over the full classifier window. Same value drives `forecast_linear_extrap` blending and the `gradual_ramp` classification rule. | §6.1 step 6.5, §7 Features |
+| `hourly_profile` / `hourlyProfile` | Length-24 array of median RPS per UTC hour over the classifier window. Zero-filled for missing hours. | §6.1 step 6.5, §4 status |
+| `hourly_profile_valid` / `hourlyProfileValid` | `true` when ≥ `HOURLY_PROFILE_MIN_HOURS` distinct UTC hours had observations. Forecast Service ignores `hourly_profile` if `false`. | §6.1 step 6.5, §4 status |
+| `peak_to_trough` | `percentile_99(series) / max(mean(series), 1.0)`. Used as `cv`'s "spike density" partner in classification rules. | §7 Features |
+| `cv` | `stddev(series) / mean(series)`; forced to 0 when `mean(series) < CV_GUARD_MEAN_RPS` to avoid blow-up at near-zero RPS. | §7 Features |
+| `rps_per_pod` / `rpsPerPodCurrent` | Sliding-window median (5-element ring buffer) of `current_rps / current_replicas`. Seeded with 5 copies of persisted value on restart. | §5 step 5 |
+| `unboundedRecommended` | Raw forecaster-derived replica count before clamping to `[minReplicas, maxReplicas]`. Surfaces capacity-planning signal when CRD bounds are binding. | §5 step 5, §4 status |
+| `recommendedReplicas` | The pre-cap, pre-cooldown replica count emitted as the `status.recommendedReplicas` field — what the controller "wanted" before step-size caps and cooldowns clipped it. | §5 step 11, §4 status |
+| `effectiveContext` | The `context` object actually forwarded to `/recommend` in the current reconcile. Equals `status.classifiedParams.context` unless cold-start (nil) or the `skip-context` annotation is set (forced nil). | §5 preamble |
+| `effectiveForecaster` | The forecaster name resolved by the precedence chain `spec.preferredForecaster ?? classifiedParams.preferredForecaster ?? "auto"`. | §5 preamble |
+| `current_hour_utc` | The controller's UTC hour at request time, forwarded in `context` for Prophet's `ds` anchoring. Per-request, not persisted. | §5 /recommend input |
+| `current_minute_utc` | The controller's UTC minute at request time, forwarded alongside `current_hour_utc`. Closes the F17 minute-level alignment gap. | §5 /recommend input |
+| `K_PERIODIC_DOWN` | Cooldown-down multiplier for the `periodic` pattern. (Spec uses this name; source code may still use the v1 name `K_TOD_DOWN` until the rename lands — see §7 footnote.) | §7 cooldown formula |

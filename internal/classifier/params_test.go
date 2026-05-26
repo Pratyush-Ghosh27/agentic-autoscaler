@@ -12,6 +12,14 @@ import (
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/classifier"
 )
 
+// TestKPeriodicDownConstantExists pins F13: the cooldown-down
+// multiplier for the periodic pattern is exported as KPeriodicDown,
+// matching design_v2.md §7. The legacy KTodDown name is gone.
+func TestKPeriodicDownConstantExists(t *testing.T) {
+	assert.Equal(t, 0.5, classifier.KPeriodicDown,
+		"KPeriodicDown must be 0.5 per design_v2.md §7")
+}
+
 func TestComputeParams_FlatTraffic(t *testing.T) {
 	// cv=0, tod=0 → scaleUp = 120/(1+0) = 120, scaleDown = 180*1/1 = 180
 	// pt=1 → maxStep clamped to 1; tod=0 + slope=0 → linear_extrap.

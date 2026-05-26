@@ -71,10 +71,16 @@ async def metrics() -> Response:
 
 @app.post("/recommend", response_model=RecommendResponse)
 async def post_recommend(req: RecommendRequest) -> RecommendResponse:
+    """G10: ``req.context`` (the cold-path ContextPayload) is
+    forwarded to the dispatcher when present. Pydantic validates the
+    payload (hourly_profile length 24, hour 0..23, minute 0..59);
+    anything malformed is returned as a 422 before reaching here.
+    """
     result = recommend(
         rps_history=req.rps_history,
         horizon_minutes=FORECAST_HORIZON_MINUTES,
         prophet_min_points=PROPHET_MIN_POINTS,
         preferred_model=req.preferred_model,
+        context=req.context,
     )
     return RecommendResponse(**result)

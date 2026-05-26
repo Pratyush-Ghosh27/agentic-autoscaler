@@ -73,6 +73,54 @@ def test_metrics_endpoint_returns_prometheus_format(client: TestClient) -> None:
     assert "forecast_prophet_failures_total" in body
 
 
+def test_recommend_endpoint_accepts_context(periodic_series_120: list[float]) -> None:
+    """G10: the /recommend endpoint accepts a `context` block and
+    returns a 200 with the same shape as a context-less request.
+    Phase 2 ships forwarding only — Phase 3 will prove that
+    context_aware vs. context_less responses differ for periodic
+    workloads."""
+    client = TestClient(app)
+    payload = {
+        "rps_history": periodic_series_120,
+        "context": {
+            "baseline_rps": 50,
+            "peak_p95_rps": 200,
+            "trend_24h_slope": 0.5,
+            "hourly_profile": [10] * 24,
+            "hourly_profile_valid": True,
+            "current_hour_utc": 14,
+            "current_minute_utc": 30,
+        },
+    }
+    resp = client.post("/recommend", json=payload)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["predicted_rps"] >= 0
+    assert body["model_used"] in ("prophet", "linear_extrap")
+
+
+def test_recommend_endpoint_rejects_malformed_context(
+    periodic_series_120: list[float],
+) -> None:
+    """A short hourly_profile is a 422 from FastAPI (Pydantic catches
+    the constraint violation in app.models)."""
+    client = TestClient(app)
+    payload = {
+        "rps_history": periodic_series_120,
+        "context": {
+            "baseline_rps": 50,
+            "peak_p95_rps": 200,
+            "trend_24h_slope": 0.5,
+            "hourly_profile": [10] * 5,
+            "hourly_profile_valid": True,
+            "current_hour_utc": 14,
+            "current_minute_utc": 30,
+        },
+    }
+    resp = client.post("/recommend", json=payload)
+    assert resp.status_code == 422
+
+
 def test_v2_env_vars_have_defaults() -> None:
     """G21, F24: every v2 env var has a sensible default so existing
     operators upgrade without setting anything new. Pinning these as

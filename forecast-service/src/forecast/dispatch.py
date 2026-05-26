@@ -32,7 +32,7 @@ def recommend(
     horizon_minutes: int,
     prophet_min_points: int,
     preferred_model: str | None = None,
-    context: "ContextPayload | None" = None,
+    context: ContextPayload | None = None,
 ) -> RecommendResult:
     """Return the predicted RPS using the best available forecaster.
 

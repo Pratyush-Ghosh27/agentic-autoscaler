@@ -50,6 +50,48 @@ func absF(v float64) float64 {
 }
 
 // -----------------------------------------------------------------------
+// HourlyAutocorrLag — F4a + G11
+// -----------------------------------------------------------------------
+
+// TestHourlyAutocorrLag pins F4a: the hourly-autocorrelation lag is
+// derived from the cold-path resolution as 60 / resolutionMin so the
+// "1 hour ago vs now" comparison stays correct at any cadence. At the
+// v2 default resolution=5 the lag is 12 (12 × 5-min steps = 60 min);
+// at the legacy resolution=1 the lag remains 60 (matching v1 TodLag).
+func TestHourlyAutocorrLag(t *testing.T) {
+	cases := []struct {
+		resolutionMin int
+		wantLag       int
+	}{
+		{1, 60},
+		{2, 30},
+		{5, 12},
+		{10, 6},
+		{12, 5},
+	}
+	for _, tc := range cases {
+		got := classifier.HourlyAutocorrLag(tc.resolutionMin)
+		assert.Equal(t, tc.wantLag, got,
+			"HourlyAutocorrLag(%d) = %d, want %d", tc.resolutionMin, got, tc.wantLag)
+	}
+}
+
+// TestHourlyAutocorrLag_DefendsZeroResolution: a malformed caller must
+// not divide-by-zero. We return 0 (effectively disabling the feature)
+// rather than panicking; config.validate() catches the bad config.
+func TestHourlyAutocorrLag_DefendsZeroResolution(t *testing.T) {
+	assert.Equal(t, 0, classifier.HourlyAutocorrLag(0))
+	assert.Equal(t, 0, classifier.HourlyAutocorrLag(-1))
+}
+
+// TestHourlyAutocorrLag_AgreesWithLegacyTodLag pins that we don't drift
+// from the v1 contract at the v1 cadence: HourlyAutocorrLag(1) must
+// equal the existing TodLag constant.
+func TestHourlyAutocorrLag_AgreesWithLegacyTodLag(t *testing.T) {
+	assert.Equal(t, classifier.TodLag, classifier.HourlyAutocorrLag(1))
+}
+
+// -----------------------------------------------------------------------
 // ExtractFeatures
 // -----------------------------------------------------------------------
 

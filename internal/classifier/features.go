@@ -23,15 +23,33 @@ import (
 	"sort"
 )
 
-// TodLag is the lag (in samples / minutes) used by the time-of-day
-// correlation. 60 minutes maps to "1 hour ago vs now" — sufficient to
-// detect periodic workloads that repeat within an hour.
+// TodLag is the legacy 1-min-cadence hourly-autocorr lag. It is kept
+// only for v1 callers; new code should use HourlyAutocorrLag(resolutionMin).
+// At the v2 default cold-path resolution of 5 minutes the correct lag
+// is 12 (= 60/5), not 60.
 const TodLag = 60
 
 // MinTodOverlap is the minimum number of overlapping samples required
-// for a meaningful Pearson correlation. With TodLag=60 and Overlap=10,
-// we need at least 70 points before tod_correlation can be computed.
+// for a meaningful Pearson correlation. With lag = 60/resolutionMin
+// and Overlap=10, we need at least lag+10 points before
+// hourly_autocorr can be computed. At resolution=5 that's 22 points;
+// at resolution=1 that's 70 (matching v1).
 const MinTodOverlap = 10
+
+// HourlyAutocorrLag returns the lag (in samples) corresponding to one
+// hour at the given downsample resolution. For the v2 cold path at
+// 5-min cadence the lag is 12; for the legacy 1-min cadence the lag
+// is 60 (matching the deprecated TodLag constant).
+//
+// Returns 0 for non-positive resolutions to avoid division-by-zero;
+// config.validate() catches a misconfigured ContextResolutionMinutes
+// before a real classifier run reaches this code path. F4a + G11.
+func HourlyAutocorrLag(resolutionMin int) int {
+	if resolutionMin <= 0 {
+		return 0
+	}
+	return 60 / resolutionMin
+}
 
 // Features holds the four extracted features from design §7.
 type Features struct {

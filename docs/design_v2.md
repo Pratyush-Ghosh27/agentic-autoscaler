@@ -1180,5 +1180,9 @@ The reconciler omits the `context` field in `/recommend` entirely when `status.c
 | Ollama returns empty content or malformed JSON | Log; no `scale_explained` event emitted. ExplainWorker continues waiting for the next request. |
 | ExplainWorker goroutine panics | Recovered by a `defer`/`recover` wrapper; logged; goroutine restarts after 60s backoff. |
 | `autoscaling.agentic.io/skip-context` annotation is set to `"true"` | Reconciler omits `context` from `/recommend`; Forecast Service falls back to context-free forecasting (no safety caps, no hourly regressor). Annotation persists until cleared by operator; see §4 annotations table. |
+| `forecast_gbdt_quantile` returns NaN or negative prediction | Treat as a model failure; fall back to `forecast_linear_extrap`. Increment `forecast_gbdt_quantile_failures_total`. Log the invalid output for debugging. |
+| `context.hourly_profile` array length is not exactly 24 | Malformed context; drop `context` (treat as if absent), log warning. Proceed with context-free forecasting. Generic "malformed context" handling above also applies. |
+| `context.current_hour_utc` outside `[0, 23]` or `context.current_minute_utc` outside `[0, 59]` | Malformed context; drop `context` (treat as if absent), log warning. Proceed with context-free forecasting. Per §5 step 1, the Forecast Service does not 400 — the hot path must keep working. |
+| Controller restarts with persisted `status.rpsPerPodCurrent` outside `[rpsPerPodMin, rpsPerPodMax]` | Seed the ring buffer with the persisted value regardless (it represents observed reality, not operator bounds). The bounds only constrain the `rpsPerPod` value used by the scaling formula, not what the ring buffer stores. Subsequent fresh observations converge the median back inside bounds. |
 
 No retries within a single reconcile or classification cycle. Just wait for the next trigger. The kill-switch path (annotation set to true) is specified in §5 step 1\.

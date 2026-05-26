@@ -253,7 +253,7 @@ Hot path timing
 | `FORECAST_TIMEOUT_SECONDS` | 5 | HTTP timeout for Forecast Service calls |
 | `RPS_PER_POD_NOISE_FLOOR_RPS` | 10 | Minimum `current_rps` required before a steady-state `current_rps / current_replicas` observation is pushed to the per-CR ring buffer (see §5 step 5). Below this floor, the ratio is dominated by sampling noise and would corrupt the median; we hold the previous `rps_per_pod` estimate instead. Operators with intentionally-low-RPS workloads (e.g., < 10 rps under load) should lower this to match. |
 
-Note: every env var in the table above is controller-only. Forecast Service env vars (`FORECAST_HORIZON_MINUTES`, `PROPHET_MIN_POINTS`, `GBDT_QUANTILE`, `GBDT_MIN_POINTS`, `PROPHET_USE_HOURLY_REGRESSOR`, `LINEAR_EXTRAP_TREND_BLEND`) are listed in the Forecast Service model parameters table below and need only be set on the Forecast Service deployment. The controller learns the horizon from each `/recommend` response's `horizon_minutes` field, so it does not need a local copy of `FORECAST_HORIZON_MINUTES`.
+Note: every env var in the table above is controller-only. Forecast Service env vars (`FORECAST_HORIZON_MINUTES`, `PROPHET_MIN_POINTS`, `GBDT_QUANTILE`, `GBDT_MIN_POINTS`, `PROPHET_USE_HOURLY_REGRESSOR`, `LINEAR_EXTRAP_RECENT_WEIGHT`) are listed in the Forecast Service model parameters table below and need only be set on the Forecast Service deployment. The controller learns the horizon from each `/recommend` response's `horizon_minutes` field, so it does not need a local copy of `FORECAST_HORIZON_MINUTES`.
 
 Cold path timing
 
@@ -285,7 +285,7 @@ Forecast Service model parameters (set on Forecast Service deployment)
 | `GBDT_QUANTILE` | 0.90 | Upper quantile predicted by `gbdt_quantile` (p90 \= scale for a worse-than-typical burst) |
 | `GBDT_MIN_POINTS` | 30 | Precondition for `forecast_gbdt_quantile`: if `len(rps_history) < GBDT_MIN_POINTS`, the path falls back to `forecast_linear_extrap`. Mirrors `PROPHET_MIN_POINTS`; both default to 30 because a few dozen samples is the rough lower bound for either model to fit something more honest than a line. |
 | `PROPHET_USE_HOURLY_REGRESSOR` | `true` | When true and `context.hourly_profile_valid` is true, Prophet adds `hour_baseline` as an external regressor. Operators who want to test Prophet without the seasonal prior can set this to `false`. |
-| `LINEAR_EXTRAP_TREND_BLEND` | `0.7` | Blend weight in `forecast_linear_extrap` between the recent-window slope (weight α) and `context.trend_24h_slope` (weight 1-α). Set to `1.0` to disable the blend (recent slope only); set lower to lean more on the long-horizon trend. Only applies when `context.trend_24h_slope` is present. |
+| `LINEAR_EXTRAP_RECENT_WEIGHT` | `0.7` | Weight on the recent-window slope in `forecast_linear_extrap`. Formula: `m_blended = LINEAR_EXTRAP_RECENT_WEIGHT * m_window + (1 - LINEAR_EXTRAP_RECENT_WEIGHT) * context.trend_24h_slope`. Set to `1.0` to disable the blend (recent slope only); set lower to lean more on the long-horizon trend. Only applies when `context.trend_24h_slope` is present. The variable name pins polarity at the env-var level so future readers do not have to consult prose to disambiguate. |
 
 Ollama (ExplainWorker)
 
@@ -592,9 +592,9 @@ This keeps the cold-path classifier in charge of when "spiky workload, predict-t
 3. If context is not None and context.trend_24h_slope is not None:
        # Blend the noisy 10-point recent slope with the long-horizon
        # 24h slope as a stability prior. Both are in rps/min.
-       m = LINEAR_EXTRAP_TREND_BLEND * m
-         + (1 - LINEAR_EXTRAP_TREND_BLEND) * context.trend_24h_slope
-       # Default LINEAR_EXTRAP_TREND_BLEND = 0.7 — favor the recent
+       m = LINEAR_EXTRAP_RECENT_WEIGHT * m
+         + (1 - LINEAR_EXTRAP_RECENT_WEIGHT) * context.trend_24h_slope
+       # Default LINEAR_EXTRAP_RECENT_WEIGHT = 0.7 — favor the recent
        # window (it carries the operative signal for the next few
        # minutes) while pulling toward the long-term direction when
        # the recent slope is dominated by sample noise.

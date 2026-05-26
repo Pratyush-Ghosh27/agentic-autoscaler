@@ -411,8 +411,10 @@ func (r *AgenticAutoscalerReconciler) buildForecastContext(aas *autoscalingv1alp
 		Trend24hSlope:      cp.Context.Trend24hSlope,
 		HourlyProfile:      cp.Context.HourlyProfile,
 		HourlyProfileValid: cp.Context.HourlyProfileValid,
-		CurrentHourUTC:     int32(now.Hour()),
-		CurrentMinuteUTC:   int32(now.Minute()),
+		// time.Hour() returns 0..23 and time.Minute() returns 0..59;
+		// the int32 narrowing is safe.
+		CurrentHourUTC:   int32(now.Hour()),   //nolint:gosec // G115: bounded 0..23
+		CurrentMinuteUTC: int32(now.Minute()), //nolint:gosec // G115: bounded 0..59
 	}
 }
 

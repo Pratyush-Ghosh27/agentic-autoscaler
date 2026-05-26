@@ -26,6 +26,9 @@ func TestClassifiedParamsContextRoundTrip(t *testing.T) {
 			HourlyProfileValid: true,
 		},
 	}
+	if cp.Pattern != "periodic" {
+		t.Errorf("Pattern round-trip failed: got %q, want %q", cp.Pattern, "periodic")
+	}
 	if cp.Context == nil {
 		t.Fatal("Context must be non-nil after assignment")
 	}
@@ -50,6 +53,9 @@ func TestClassifiedParamsContextRoundTrip(t *testing.T) {
 // valid state (cold start, before the first classification cycle).
 func TestClassifiedParamsContextOptional(t *testing.T) {
 	cp := ClassifiedParams{Pattern: "default"}
+	if cp.Pattern != "default" {
+		t.Errorf("Pattern round-trip failed: got %q, want %q", cp.Pattern, "default")
+	}
 	if cp.Context != nil {
 		t.Errorf("zero-value ClassifiedParams must have nil Context, got: %+v", cp.Context)
 	}

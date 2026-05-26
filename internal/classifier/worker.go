@@ -230,22 +230,22 @@ func (w *Worker) runClassification(ctx context.Context, logger logr.Logger) bool
 			CVGuardMeanRPS:        w.Config.CVGuardMeanRPS,
 			StartHourUTC:          start.UTC().Hour(),
 		}
-		result, err := RunPipelineV2(series,
+		v2Result, v2Err := RunPipelineV2(series,
 			w.Config.HighConfPoints, w.Config.MinPoints,
 			w.MinReplicas, w.MaxReplicas, cfg)
-		if err != nil {
-			w.emitEvent(ctx, corev1.EventTypeNormal, reasoning.PatternUnknown,
+		if v2Err != nil {
+			w.emitEvent(ctx, reasoning.PatternUnknown,
 				fmt.Sprintf("insufficient history: %d points (need %d)",
 					len(series), w.Config.MinPoints))
 			return false
 		}
-		if err := w.patchStatusV2(ctx, result); err != nil {
-			logger.Error(err, "failed to patch classifiedParams")
+		if patchErr := w.patchStatusV2(ctx, v2Result); patchErr != nil {
+			logger.Error(patchErr, "failed to patch classifiedParams")
 			return false
 		}
 		w.lastClassifyAt = w.Now()
-		w.emitEvent(ctx, corev1.EventTypeNormal, reasoning.PatternClassified,
-			formatClassifiedMessage(result.PipelineResult))
+		w.emitEvent(ctx, reasoning.PatternClassified,
+			formatClassifiedMessage(v2Result.PipelineResult))
 		return true
 	}
 
@@ -255,7 +255,7 @@ func (w *Worker) runClassification(ctx context.Context, logger logr.Logger) bool
 	if err != nil {
 		// Insufficient points — a *normal* steady state (just-deployed
 		// targets, brief outages). Log + Event, continue.
-		w.emitEvent(ctx, corev1.EventTypeNormal, reasoning.PatternUnknown,
+		w.emitEvent(ctx, reasoning.PatternUnknown,
 			fmt.Sprintf("insufficient history: %d points (need %d)",
 				len(series), w.Config.MinPoints))
 		return false
@@ -268,7 +268,7 @@ func (w *Worker) runClassification(ctx context.Context, logger logr.Logger) bool
 
 	w.lastClassifyAt = w.Now()
 
-	w.emitEvent(ctx, corev1.EventTypeNormal, reasoning.PatternClassified,
+	w.emitEvent(ctx, reasoning.PatternClassified,
 		formatClassifiedMessage(result))
 	return true
 }
@@ -356,7 +356,12 @@ func (w *Worker) removeReclassifyAnnotation(ctx context.Context, logger logr.Log
 // emitEvent looks up the CR (so the EventRecorder has an involvedObject)
 // and records the event. If the CR cannot be fetched we silently skip —
 // a missing CR means we're racing a delete; nothing to do.
-func (w *Worker) emitEvent(ctx context.Context, eventType, reason, message string) {
+//
+// Event type is always Normal (Warning-class transitions are surfaced
+// via controller logs + metrics, not via Events, to keep the apiserver
+// event budget bounded on noisy clusters). If a future caller needs a
+// Warning event, reintroduce the parameter then.
+func (w *Worker) emitEvent(ctx context.Context, reason, message string) {
 	if w.EventRecorder == nil {
 		return
 	}
@@ -364,7 +369,7 @@ func (w *Worker) emitEvent(ctx context.Context, eventType, reason, message strin
 	if err := w.Client.Get(ctx, w.Key, &aas); err != nil {
 		return
 	}
-	w.EventRecorder.Event(&aas, eventType, reason, message)
+	w.EventRecorder.Event(&aas, corev1.EventTypeNormal, reason, message)
 }
 
 // formatClassifiedMessage builds the structured event message used both

@@ -56,3 +56,4 @@ forecast-service/**/__pycache__/
 forecast-service/**/*.egg-info/
 forecast-service/.coverage
 forecast-service/htmlcov/
+.cache/

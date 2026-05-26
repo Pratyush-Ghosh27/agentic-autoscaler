@@ -191,6 +191,30 @@ test-envtest: manifests envtest ## Run envtest-driven controller + webhook integ
 .PHONY: test-all
 test-all: test test-envtest ## Run every test suite (Tier-1 + Tier-2).
 
+# ----- Pre-flight check ------------------------------------------------
+# Run before every push/PR to mirror the CI gate locally. Mirrors the
+# `lint`, `generate-check`, `test-go`, `test-python`, and `test-envtest`
+# jobs in .github/workflows/ci.yml. Skipped jobs (build-images, smoke)
+# need Docker/kind so they stay CI-only.
+.PHONY: pre-flight
+pre-flight: ## Run every CI gate locally (lint + generate-check + Go/Python/envtest). Skips images + smoke (need Docker/kind).
+	@echo "==> [1/5] lint"
+	@$(MAKE) lint
+	@echo "==> [2/5] generate-check (regenerate codegen, fail if it dirties the tree)"
+	@$(MAKE) manifests generate gen-testdata
+	@if ! git diff --quiet -- api/ config/crd/ testdata/ deploy/ 2>/dev/null; then \
+	  echo "::error::Codegen produced uncommitted changes. Run 'make manifests generate gen-testdata' and commit."; \
+	  git --no-pager diff --stat -- api/ config/crd/ testdata/ deploy/; \
+	  exit 1; \
+	fi
+	@echo "==> [3/5] test-go (unit + adapters, with coverage)"
+	@$(MAKE) test-go
+	@echo "==> [4/5] test-python (with 90% coverage gate)"
+	@$(MAKE) test-python
+	@echo "==> [5/5] test-envtest (controller + webhook integration)"
+	@$(MAKE) test-envtest
+	@echo "==> pre-flight OK — safe to push"
+
 .PHONY: test-smoke-validation
 test-smoke-validation: ## Run the pure-Go manifest validation suite.
 	go test ./test/smoke/... -count=1

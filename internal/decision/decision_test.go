@@ -281,6 +281,54 @@ func TestShouldUpdateRpsPerPod(t *testing.T) {
 	}
 }
 
+// TestShouldUpdateRpsPerPodWithFloor pins F23: the noise floor on
+// the rps_per_pod steady-state gate is now a per-deployment knob, not
+// a hard-coded `10`. The default 10 stays available via the
+// single-arg ShouldUpdateRpsPerPod for backward compat (legacy
+// callers); new callers use the explicit floor variant and read it
+// from config.RpsPerPodNoiseFloorRPS (T14 wires the controller).
+func TestShouldUpdateRpsPerPodWithFloor(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	interval := 60 * time.Second
+	lastScale := now.Add(-5 * time.Minute) // outside the 2× window
+
+	cases := []struct {
+		name       string
+		currentRPS float64
+		floor      float64
+		want       bool
+	}{
+		{"7 rps with floor=5 → accepted", 7, 5, true},
+		{"7 rps with floor=10 → rejected", 7, 10, false},
+		{"exact equality at floor → accepted", 10, 10, true},
+		{"just below floor → rejected", 9.99, 10, false},
+		{"floor=0 accepts any positive RPS", 0.01, 0, true},
+		{"floor=0 still rejects zero RPS", 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decision.ShouldUpdateRpsPerPodWithFloor(
+				tc.currentRPS, 2, lastScale, now, interval, tc.floor)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestShouldUpdateRpsPerPod_DelegatesToWithFloor pins that the
+// single-arg helper preserves the legacy 10-rps floor semantics so
+// existing callers (and tests) don't drift.
+func TestShouldUpdateRpsPerPod_DelegatesToWithFloor(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	interval := 60 * time.Second
+	lastScale := now.Add(-5 * time.Minute)
+	// 9.5 rps: below the legacy floor → must be rejected.
+	got := decision.ShouldUpdateRpsPerPod(9.5, 2, lastScale, now, interval)
+	assert.False(t, got, "single-arg helper must keep the legacy 10-rps floor")
+	// 10.5 rps: above the legacy floor → must be accepted.
+	got = decision.ShouldUpdateRpsPerPod(10.5, 2, lastScale, now, interval)
+	assert.True(t, got)
+}
+
 // -----------------------------------------------------------------------
 // ClampRpsPerPod
 // -----------------------------------------------------------------------

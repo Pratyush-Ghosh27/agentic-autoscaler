@@ -221,14 +221,45 @@ func ApplyCapAndCooldown(in CapInput) CapOutput {
 	}
 }
 
-// ShouldUpdateRpsPerPod implements the steady-state gate (design §5 step 5):
-// only fold a new observation into the ring buffer when:
-//   - current_rps >= 10 (avoid noise from low-traffic moments)
+// DefaultRpsPerPodNoiseFloor is the legacy single-arg
+// ShouldUpdateRpsPerPod's noise floor (10 rps). New callers should
+// pass an explicit floor via ShouldUpdateRpsPerPodWithFloor and read
+// it from config.RpsPerPodNoiseFloorRPS so the threshold can be
+// tuned per-deployment. F23.
+const DefaultRpsPerPodNoiseFloor = 10.0
+
+// ShouldUpdateRpsPerPod is the legacy single-arg gate. Equivalent to
+// ShouldUpdateRpsPerPodWithFloor with floor = DefaultRpsPerPodNoiseFloor.
+// Preserved for callers that haven't been migrated; T14 switches the
+// controller reconciler to the explicit-floor variant.
+func ShouldUpdateRpsPerPod(currentRPS float64, replicas int32, lastScale, now time.Time, interval time.Duration) bool {
+	return ShouldUpdateRpsPerPodWithFloor(
+		currentRPS, replicas, lastScale, now, interval, DefaultRpsPerPodNoiseFloor)
+}
+
+// ShouldUpdateRpsPerPodWithFloor implements the steady-state gate
+// (design §5 step 5) with a configurable noise floor. Only fold a new
+// observation into the ring buffer when:
+//   - current_rps >= noiseFloor (avoid noise from low-traffic moments;
+//     a noiseFloor of 0 effectively disables the check)
 //   - replicas >= 1 (otherwise division explodes)
 //   - now - lastScale >= 2 * interval (system is past the transient
 //     immediately following a scale event)
-func ShouldUpdateRpsPerPod(currentRPS float64, replicas int32, lastScale, now time.Time, interval time.Duration) bool {
-	if currentRPS < 10 || replicas < 1 {
+//
+// F23 made the floor tunable per deployment via config.Config's
+// RpsPerPodNoiseFloorRPS; the controller reconciler reads from there
+// and threads it into this call (wired in T14).
+func ShouldUpdateRpsPerPodWithFloor(
+	currentRPS float64,
+	replicas int32,
+	lastScale, now time.Time,
+	interval time.Duration,
+	noiseFloor float64,
+) bool {
+	if currentRPS <= 0 || replicas < 1 {
+		return false
+	}
+	if currentRPS < noiseFloor {
 		return false
 	}
 	return now.Sub(lastScale) >= 2*interval

@@ -563,3 +563,136 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// -----------------------------------------------------------------------
+// Context plumbing through the worker — G10 + G11
+// -----------------------------------------------------------------------
+
+// TestWorker_WritesContextToStatus pins T12: after a successful
+// classification cycle the worker writes the cold-path context block
+// (baseline_rps, peak_p95_rps, trend_24h_slope, hourly_profile,
+// hourly_profile_valid) to status.classifiedParams.context. This is
+// the single source the controller reads from to forward to the
+// Forecast Service in T14.
+func TestWorker_WritesContextToStatus(t *testing.T) {
+	cr := newSampleCR()
+	prom := &fakeProm{}
+	prom.SetSamples(samplesFromSeries(loadSeries(t, "periodic_1440.json")))
+	w, _ := newWorker(t, cr, prom)
+	// Engage the v2 cold-path config so the worker switches to
+	// RunPipelineV2 and the context block is computed.
+	w.Config.ResolutionMin = 5
+	w.Config.HourlyProfileMinHours = 12
+	w.Config.CVGuardMeanRPS = 1.0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); w.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		var got autoscalingv1alpha1.AgenticAutoscaler
+		err := w.Client.Get(ctx, w.Key, &got)
+		return err == nil &&
+			got.Status.ClassifiedParams != nil &&
+			got.Status.ClassifiedParams.Context != nil
+	}, 1500*time.Millisecond, 25*time.Millisecond,
+		"context never populated on classifiedParams")
+
+	cancel()
+	wg.Wait()
+
+	var got autoscalingv1alpha1.AgenticAutoscaler
+	require.NoError(t, w.Client.Get(context.Background(), w.Key, &got))
+	require.NotNil(t, got.Status.ClassifiedParams)
+	require.NotNil(t, got.Status.ClassifiedParams.Context)
+	c := got.Status.ClassifiedParams.Context
+	assert.NotZero(t, c.BaselineRPS, "BaselineRPS must be non-zero on the periodic fixture")
+	assert.NotZero(t, c.PeakP95RPS, "PeakP95RPS must be non-zero on the periodic fixture")
+	assert.Len(t, c.HourlyProfile, 24)
+	// 1440 points at 5-min cadence is 5 days of coverage so the
+	// 12-hour gate passes trivially.
+	assert.True(t, c.HourlyProfileValid)
+}
+
+// TestWorker_PromQLStepTracksResolution pins that the worker's
+// RangeQuery step is cfg.ResolutionMin minutes (5 by default in v2),
+// not the legacy hard-coded time.Minute. The fakeProm captures the
+// step argument so we can assert on it.
+func TestWorker_PromQLStepTracksResolution(t *testing.T) {
+	cr := newSampleCR()
+	prom := &capturingProm{}
+	w, _ := newWorker(t, cr, &prom.fakeProm)
+	w.Config.ResolutionMin = 5
+	w.Config.HourlyProfileMinHours = 12
+	w.Config.CVGuardMeanRPS = 1.0
+	w.Prom = prom
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); w.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		return prom.lastStep() > 0
+	}, 1500*time.Millisecond, 25*time.Millisecond, "Prom never queried")
+
+	cancel()
+	wg.Wait()
+
+	assert.Equal(t, 5*time.Minute, prom.lastStep(),
+		"PromQL step must be cfg.ResolutionMin minutes")
+}
+
+// TestWorker_DefaultResolutionPreservesV1Behavior pins that an
+// unset ResolutionMin (zero-value) keeps the legacy 1-min step so
+// existing callers / tests don't silently change behaviour.
+func TestWorker_DefaultResolutionPreservesV1Behavior(t *testing.T) {
+	cr := newSampleCR()
+	prom := &capturingProm{}
+	w, _ := newWorker(t, cr, &prom.fakeProm)
+	// Leave ResolutionMin at zero-value to simulate a v1 caller.
+	w.Prom = prom
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); w.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		return prom.lastStep() > 0
+	}, 1500*time.Millisecond, 25*time.Millisecond)
+
+	cancel()
+	wg.Wait()
+
+	assert.Equal(t, time.Minute, prom.lastStep(),
+		"unset ResolutionMin must preserve the v1 1-min step")
+}
+
+// capturingProm wraps fakeProm and records the step argument from
+// the most recent RangeQuery call. Composition lets us reuse all the
+// existing helpers (SetSamples, SetError, Calls).
+type capturingProm struct {
+	fakeProm
+	mu   sync.Mutex
+	step time.Duration
+}
+
+func (c *capturingProm) RangeQuery(
+	ctx context.Context, query string, start, end time.Time, step time.Duration,
+) ([]prometheus.Sample, error) {
+	c.mu.Lock()
+	c.step = step
+	c.mu.Unlock()
+	return c.fakeProm.RangeQuery(ctx, query, start, end, step)
+}
+
+func (c *capturingProm) lastStep() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.step
+}

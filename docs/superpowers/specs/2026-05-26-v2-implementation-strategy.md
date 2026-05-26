@@ -39,8 +39,8 @@ The thirteen pending decisions in `v2-spec-revision-plan.md` §1 are ratified he
 | D4 | Revisit F9 (forecaster-swap discontinuity) | (b) Add §7 boundary-stability paragraph. |
 | D5 | `autoscaling.agentic.io/skip-context` annotation | (b) Add the annotation. |
 | D6 | Migration guide v1 → v2 | (b) Sibling doc `docs/migrating-v1-to-v2.md`. |
-| D7 | Glossary section | (a) New §11 Glossary in `design_v2.md`. |
-| D8 | Acceptance criteria section | (a) New §12 Acceptance criteria in `design_v2.md`. |
+| D7 | Glossary section | (a) New §10 Glossary in `design_v2.md` (landed at §10, not §11 — design_v2.md ends at §9; numbering is sequential). |
+| D8 | Acceptance criteria section | (a) New §11 Acceptance criteria in `design_v2.md` (landed at §11 to follow §10 Glossary). |
 | D9 | §9 failure-mode coverage | (a) Audit and add 3–5 new rows. |
 | D10 | Versioning banner | (c) Promote to "Approved" once both spec is internally consistent and code matches. |
 | D11 | Promote F22 (`auto` never picks `gbdt_quantile`) into spec body | (a) Add §5 auto-mode subsection. |

@@ -111,7 +111,7 @@ Each decision is a yes/no (or A/B/C) gate that, once answered, produces a concre
 **Background.** design_v2.md names ~15 specialised terms (`baseline_rps`, `peak_p95_rps`, `hourly_autocorr`, `trend_24h_slope`, `hourly_profile`, `peak_to_trough`, `cv`, `rps_per_pod`, `unboundedRecommended`, `recommendedReplicas`, `effectiveContext`, `effectiveForecaster`, `hourlyProfileValid`, `current_hour_utc`, `current_minute_utc`). Definitions are scattered across §4 / §6.1 / §7. A reader landing in §5 has to chase backwards.
 
 **Options.**
-- (a) Add §11 Glossary at the end of design_v2.md. Term → one-sentence definition → §-where-it's-defined link.
+- (a) Add a Glossary section at the end of design_v2.md. Term → one-sentence definition → §-where-it's-defined link. (Landed as §10 — design_v2.md currently ends at §9.)
 - (b) Sibling doc `docs/v2-glossary.md`.
 - (c) No glossary; rely on inline definitions and search.
 
@@ -126,7 +126,7 @@ Each decision is a yes/no (or A/B/C) gate that, once answered, produces a concre
 **Background.** design_v2.md doesn't declare what "v2 ships" means in terms of testable assertions. `gap-report-v2.md` G10–G23 implicitly enumerate the acceptance criteria, but the *spec* should declare its own ship gates so a future contributor doesn't infer them from the gap report alone.
 
 **Options.**
-- (a) Add §12 Acceptance criteria. Bulleted list: e.g., *"For a workload classified `spiky`, an unmodified `auto`-mode `/recommend` request returns `model_used == 'gbdt_quantile'` once `len(rps_history) >= GBDT_MIN_POINTS`"*; *"Prophet's `ds[-1]` aligns to `(context.current_hour_utc, context.current_minute_utc)` regardless of Forecast Service pod clock"*; etc.
+- (a) Add an Acceptance criteria section. Bulleted list: e.g., *"For a workload classified `spiky`, an unmodified `auto`-mode `/recommend` request returns `model_used == 'gbdt_quantile'` once `len(rps_history) >= GBDT_MIN_POINTS`"*; *"Prophet's `ds[-1]` aligns to `(context.current_hour_utc, context.current_minute_utc)` regardless of Forecast Service pod clock"*; etc. (Landed as §11, immediately after §10 Glossary.)
 - (b) Sibling doc `docs/v2-acceptance.md` with the same content.
 - (c) Bake the criteria into §5 / §6.1 / §7 inline — *"behavior X must be testable as Y"* alongside each behavior.
 - (d) No formal section — gap-report-v2.md plus the existing CI suite is enough.
@@ -233,8 +233,8 @@ These are concrete edits to design_v2.md (or sibling docs). Some are unblocked n
 | **E5** | Add a single source-of-truth cross-reference table mapping §6.2 `ExplainRequest` fields ↔ §4 status fields ↔ §7 features | Unblocked | Currently three separate lists (§6.2:875-897, §4:206-212, §7:972-979). Place the table in §6.2 with back-links from the other two sections. |
 | **E6** | Verify §1 ↔ §5 step 10 ↔ §6.2 token enumeration consistency | Unblocked | F40 fixed §1; verify all three sites enumerate the same 16 tokens (incl. the bindings, both `with replica change` and `without replica change` qualifiers). ~20 minutes. |
 | **E7** | New sibling doc `docs/migrating-v1-to-v2.md` | D6 = (b) | CRD diff + env-var diff + behaviour-change list + one-line "what to expect" per change. ~half a page. |
-| **E8** | New §11 Glossary in design_v2.md | D7 = (a) | ~15 terms × 1 line. Each term links to the §-where-it's-defined. |
-| **E9** | New §12 Acceptance criteria in design_v2.md | D8 = (a) | ~20 testable assertions. Each assertion maps to a `gap-report-v2.md` G# (or to existing v1 CI coverage). |
+| **E8** | New §10 Glossary in design_v2.md (numbering follows current §1–§9) | D7 = (a) | ~15 terms × 1 line. Each term links to the §-where-it's-defined. |
+| **E9** | New §11 Acceptance criteria in design_v2.md | D8 = (a) | ~20 testable assertions. Each assertion maps to a `gap-report-v2.md` G# (or to existing v1 CI coverage). |
 | **E10** | Audit §9 failure-mode table; add rows for any uncovered v2-introduced failure paths | D9 = (a) | Estimated 3–5 new rows: GBDT prediction NaN/negative; `hourly_profile` array length mismatch (more specific than current "malformed context" generic row); `current_hour_utc` / `current_minute_utc` out of range; restart with persisted `rpsPerPodCurrent` out of bounds. |
 | **E11** | Update §0 status banner from "Draft for team review" to "Approved" | D10 = (c) **and** §1 + §2 complete **and** gap-report-v2.md G10–G23 closed | One-line edit. The state machine: this is the last edit to land. |
 | **E12** | Reaffirm `v2_revision notes.md` as a separate (non-merged) file | Unblocked | Add a one-line note to design_v2.md's header or §0: *"Audit history lives in `v2_revision notes.md` (append-only). This file is current-state only."* Prevents future contributors from "rationalising" by merging history back. |

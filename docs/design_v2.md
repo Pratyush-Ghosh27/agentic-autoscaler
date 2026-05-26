@@ -312,11 +312,13 @@ effectiveCooldownDown = spec.scaleDownCooldownSeconds  ?? classifiedParams.scale
 effectiveMaxStep      = spec.maxStepSize               ?? classifiedParams.maxStepSize               ?? DEFAULT_MAX_STEP_SIZE
 effectiveForecaster   = spec.preferredForecaster       ?? classifiedParams.preferredForecaster       ?? "auto"
 effectiveContext      = status.classifiedParams.context   // may be nil on cold start; not part of precedence chain
+if metadata.annotations["autoscaling.agentic.io/skip-context"] == "true":
+    effectiveContext  = nil                                // operator override; context omitted from /recommend regardless of classifier state
 ```
 
 Note on default values vs. classifier neutral output. The pre-classification fallbacks (`DEFAULT_SCALE_UP_COOLDOWN_SECONDS` / `DEFAULT_SCALE_DOWN_COOLDOWN_SECONDS` / `DEFAULT_MAX_STEP_SIZE`, defaulting to 60s/300s/4) are intentionally more reactive than what the classifier produces on flat traffic (which yields 120s/180s/1 at cv=0, hourly\_autocorr=0). The rationale: without classification we know nothing about the workload, so we err toward faster scale-up, slower scale-down (to avoid yo-yoing on noise), and a slightly larger step size to recover from underprovision quickly. Once the classifier runs, its data-driven recommendation supersedes these defaults.
 
-Note on `effectiveContext`. There is no `spec.context` override. Context is empirical data extracted from the cluster, not an operator preference. The reconciler reads `status.classifiedParams.context` verbatim, or omits the `context` field in `/recommend` entirely if the classifier has not yet written one (cold start).
+Note on `effectiveContext`. There is no `spec.context` override. Context is empirical data extracted from the cluster, not an operator preference. The reconciler reads `status.classifiedParams.context` verbatim, or omits the `context` field in `/recommend` entirely if the classifier has not yet written one (cold start). Exception: if the `autoscaling.agentic.io/skip-context` annotation is set to `"true"`, the reconciler treats `effectiveContext` as nil regardless of classifier state — see the §4 annotations table for operator-facing semantics.
 
 1. Pre-checks (short-circuit on first match):  
    * `autoscaling.agentic.io/kill-switch=true` → set `status.phase = "Disabled"`, emit `kill_switched` event, return. Remove the annotation (or set it to `"false"`) to restore normal reconciliation.  

@@ -201,6 +201,24 @@ func todCorrelation(series []float64, lag, minOverlap int) float64 {
 	return num / math.Sqrt(sx*sy)
 }
 
+// TrendSlopeRpsPerMin computes the least-squares slope and converts
+// from rps/sample to rps/min by dividing by resolutionMin. The
+// `gradual_ramp` daily-drift rule (F26) and the `trend_24h_slope`
+// context field (G10) both expect rps/min — using TrendSlopeRpsPerMin
+// at the configured cold-path resolution keeps both unit-correct
+// regardless of cadence.
+//
+// At resolutionMin <= 0 we fall back to the raw rps/sample slope
+// (config.validate() catches bad resolutions before any real cold-path
+// run reaches this code). F18 + G11.
+func TrendSlopeRpsPerMin(series []float64, resolutionMin int) float64 {
+	raw := trendSlope(series)
+	if resolutionMin <= 0 {
+		return raw
+	}
+	return raw / float64(resolutionMin)
+}
+
 // trendSlope returns the least-squares slope of the series.
 //   - x values are 0..n-1 (sample index = minutes when cadence is 1m)
 //   - returns slope in rps per sample (≡ rps/min for 1m cadence)

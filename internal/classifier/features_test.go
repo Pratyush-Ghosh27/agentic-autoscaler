@@ -199,3 +199,42 @@ func TestExtractFeatures_TrendSlopeKnownLinear(t *testing.T) {
 	f := classifier.ExtractFeatures(series)
 	assert.InDelta(t, 2.0, f.TrendSlope, 0.001)
 }
+
+// -----------------------------------------------------------------------
+// TrendSlopeRpsPerMin — F18 + G11
+// -----------------------------------------------------------------------
+
+// TestTrendSlopeRpsPerMin pins F18: trend slope is reported in rps/min
+// regardless of the cold-path downsample resolution. At 5-min cadence
+// a series rising by 5 rps per sample is rising by 1 rps/min — that is
+// the unit the gradual_ramp daily-drift rule expects.
+func TestTrendSlopeRpsPerMin(t *testing.T) {
+	series := []float64{0, 5, 10, 15, 20}
+	got := classifier.TrendSlopeRpsPerMin(series, 5)
+	assert.InDelta(t, 1.0, got, 0.001,
+		"5 rps/sample at 5-min cadence ⇒ 1 rps/min")
+}
+
+// TestTrendSlopeRpsPerMin_AgreesWithExtractFeaturesAt1Min: at the
+// legacy 1-min cadence, the helper must produce the same slope as the
+// embedded TrendSlope on the existing Features.
+func TestTrendSlopeRpsPerMin_AgreesWithExtractFeaturesAt1Min(t *testing.T) {
+	series := make([]float64, 60)
+	for i := range series {
+		series[i] = 100 + 2*float64(i)
+	}
+	got := classifier.TrendSlopeRpsPerMin(series, 1)
+	f := classifier.ExtractFeatures(series)
+	assert.InDelta(t, f.TrendSlope, got, 0.001,
+		"1-min cadence ⇒ helper agrees with Features.TrendSlope")
+}
+
+// TestTrendSlopeRpsPerMin_DefendsBadResolution: a non-positive
+// resolution returns the raw rps/sample slope rather than panicking.
+// config.validate() catches the bad config before this codepath is
+// hit in production.
+func TestTrendSlopeRpsPerMin_DefendsBadResolution(t *testing.T) {
+	series := []float64{0, 5, 10, 15, 20}
+	got := classifier.TrendSlopeRpsPerMin(series, 0)
+	assert.InDelta(t, 5.0, got, 0.001, "raw rps/sample on bad resolution")
+}

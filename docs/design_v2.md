@@ -2,6 +2,8 @@
 
 Date: 2026-05-25 Status: Draft for team review (v2 — complete spec; supersedes v1 dated 2026-05-21)
 
+Audit history: `docs/v2_revision notes.md` (append-only). This file is current-state only.
+
 ## **1\. Overview**
 
 Kubernetes HPA is reactive: by the time CPU crosses the threshold, latency has already risen. The agentic autoscaler is a real Kubernetes operator that polls Prometheus for recent RPS history, asks a Forecast Service (auto-selecting between three forecasters: linear extrapolation, Prophet, and GBDT quantile) to predict RPS `FORECAST_HORIZON_MINUTES` ahead (default: 10 minutes), and patches the target Deployment's `/scale` subresource so capacity arrives before traffic does.

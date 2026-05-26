@@ -132,6 +132,45 @@ func TestExtractFeatures_LowMeanReturnsZeroCV(t *testing.T) {
 	assert.Equal(t, 0.0, f.CV)
 }
 
+// TestExtractFeatures_PeakToTroughUsesMaxMeanGuard pins F28: the
+// peakToTrough denominator is max(mean, CVGuardMeanRPS), not mean+1.
+// For low-mean series this prevents a small absolute spike from
+// producing a misleadingly large peak-to-trough ratio.
+//
+//	mean = 0.65, p99 = 2.0
+//	old denom (m + 1)              → 2.0 / 1.65 ≈ 1.21
+//	new denom max(m, CVGuardMeanRPS) → 2.0 / 1.0  = 2.0
+func TestExtractFeatures_PeakToTroughUsesMaxMeanGuard(t *testing.T) {
+	series := []float64{0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 2.0}
+	f := classifier.ExtractFeatures(series)
+	assert.InDelta(t, 2.0, f.PeakToTrough, 0.05,
+		"expected p99=2.0 / max(mean=0.65, 1.0) = 2.0 (F28)")
+}
+
+// TestCVGuardMeanRPSConstantExists pins F29: the CV-zero-guard
+// threshold is a named, package-level variable so it can be tuned
+// per-deployment via config (T13 wires the config side).
+func TestCVGuardMeanRPSConstantExists(t *testing.T) {
+	assert.InDelta(t, 1.0, classifier.CVGuardMeanRPS, 0.0001,
+		"CVGuardMeanRPS default must be 1.0 rps")
+}
+
+// TestExtractFeatures_PeakToTroughHighMeanUnchanged pins that on a
+// realistic high-mean series the new denominator behaves like the
+// old one to within rounding (because max(m, 1) == m when m ≥ 1):
+// p99 / m vs p99 / (m + 1) is essentially the same for m ≫ 1.
+func TestExtractFeatures_PeakToTroughHighMeanUnchanged(t *testing.T) {
+	series := make([]float64, 100)
+	for i := range series {
+		series[i] = 100 // mean ≈ 100, max ≈ 100, p99 ≈ 100
+	}
+	series[99] = 500 // one spike
+	f := classifier.ExtractFeatures(series)
+	// p99 of len=100 sorted with one 500: idx = ceil(0.99*100)-1 = 98 → still 100.
+	// peakToTrough = 100 / max(mean, 1) ≈ 100/104 ≈ 0.96
+	assert.InDelta(t, 1.0, f.PeakToTrough, 0.05)
+}
+
 func TestExtractFeatures_BelowTodOverlapReturnsZero(t *testing.T) {
 	// Need 60+10=70 points for tod_correlation; 50 points → 0.
 	series := make([]float64, 50)

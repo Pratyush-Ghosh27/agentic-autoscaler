@@ -36,6 +36,14 @@ const TodLag = 60
 // at resolution=1 that's 70 (matching v1).
 const MinTodOverlap = 10
 
+// CVGuardMeanRPS is the threshold below which CV is forced to zero
+// (to avoid amplifying noise on idle services) and which doubles as
+// the floor on the peakToTrough denominator (F28: peakToTrough =
+// p99 / max(mean, CVGuardMeanRPS)). It is a package-level variable so
+// the cold-path worker can override it from config.CVGuardMeanRPS at
+// startup; unit tests rely on the 1.0 default. F29.
+var CVGuardMeanRPS float64 = 1.0
+
 // HourlyAutocorrLag returns the lag (in samples) corresponding to one
 // hour at the given downsample resolution. For the v2 cold path at
 // 5-min cadence the lag is 12; for the legacy 1-min cadence the lag
@@ -82,13 +90,23 @@ func ExtractFeatures(series []float64) Features {
 	m := mean(series)
 	sd := stddev(series, m)
 
+	// F29: zero-guard the CV computation on idle services. Below
+	// CVGuardMeanRPS, `sd / m` would amplify floating-point noise into
+	// a meaningless ratio; we set CV to 0 so downstream classification
+	// treats the workload as flat instead of spiky.
 	var cv float64
-	if m >= 1 {
+	if m >= CVGuardMeanRPS {
 		cv = sd / m
 	}
 
+	// F28: clamp the peakToTrough denominator to max(mean, CVGuardMeanRPS).
+	// The old `mean + 1` denominator silently shrank the ratio for any
+	// workload with mean > 0 — at high mean this barely mattered, but
+	// it also blurred the boundary between "low-traffic with one spike"
+	// and "real spiky pattern". Using max(mean, guard) keeps small
+	// services from inflating their peak-to-trough ratio.
 	p99 := percentile(series, 0.99)
-	peakToTrough := p99 / (m + 1)
+	peakToTrough := p99 / math.Max(m, CVGuardMeanRPS)
 
 	slope := trendSlope(series)
 

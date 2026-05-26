@@ -742,12 +742,17 @@ Two goroutines run per active `AgenticAutoscaler` CR alongside the hot-path reco
 
 ### **6.1 ClassifierWorker**
 
-#### **Triggers**
+#### **Initial classification trigger**
 
-1. Immediate first run — when the reconciler first sees a CR, the worker runs classification once before starting its periodic timer. If fewer than `CLASSIFIER_MIN_POINTS` history points exist in Prometheus, it emits `pattern_unknown` and waits for the next trigger; otherwise the CR reaches its classified state without waiting up to `CLASSIFIER_INTERVAL_MINUTES` for the first timer tick.  
-2. Periodic timer — fires every `CLASSIFIER_INTERVAL_MINUTES` minutes (default 30\) after the immediate first run.  
-3. Manual annotation — operator sets `autoscaling.agentic.io/reclassify: "true"` on the CR. A controller-runtime watcher on `AgenticAutoscaler` observes the annotation change and signals the worker to run classification immediately; the worker then removes the annotation via a patch. Intended for use after a known traffic-pattern change (e.g., a major deploy or a product launch).  
-4. Deployment rollout — a controller-runtime watcher (informer) on the target Deployment observes changes to the `deployment.kubernetes.io/revision` annotation and signals the worker to re-classify immediately, since new code often changes traffic characteristics. The revision annotation is incremented by the Deployment controller only on actual rollouts (image / env / command changes that produce a new ReplicaSet) — **not** on `/scale` patches. We deliberately do **not** watch `metadata.generation`, because the apiserver bumps that field on every `spec.replicas` update too, which would cause this trigger to fire on every reconcile that scales — defeating the purpose. Dedup: the worker still skips this trigger if any prior classification ran within the last `CLASSIFIER_DEDUP_SECONDS` seconds (so the initial-sync race between informer's first emit and trigger 1's immediate first run collapses to a single classification cycle).
+1. **Immediate first run** — when the reconciler first sees a CR, the worker runs classification once before starting its periodic timer. If fewer than `CLASSIFIER_MIN_POINTS` history points exist in Prometheus, it emits `pattern_unknown` and waits for the next trigger; otherwise the CR reaches its classified state without waiting up to `CLASSIFIER_INTERVAL_MINUTES` for the first timer tick.
+
+#### **Re-classification triggers**
+
+1. **Periodic timer** — fires every `CLASSIFIER_INTERVAL_MINUTES` minutes (default 30) after the immediate first run.
+2. **Manual annotation** — operator sets `autoscaling.agentic.io/reclassify: "true"` on the CR. A controller-runtime watcher on `AgenticAutoscaler` observes the annotation change and signals the worker to run classification immediately; the worker then removes the annotation via a patch. Intended for use after a known traffic-pattern change (e.g., a major deploy or a product launch).
+3. **Deployment rollout** — a controller-runtime watcher (informer) on the target Deployment observes changes to the `deployment.kubernetes.io/revision` annotation and signals the worker to re-classify immediately, since new code often changes traffic characteristics. The revision annotation is incremented by the Deployment controller only on actual rollouts (image / env / command changes that produce a new ReplicaSet) — **not** on `/scale` patches. We deliberately do **not** watch `metadata.generation`, because the apiserver bumps that field on every `spec.replicas` update too, which would cause this trigger to fire on every reconcile that scales — defeating the purpose.
+
+**Dedup:** The worker skips any re-classification trigger if any prior classification ran within the last `CLASSIFIER_DEDUP_SECONDS` seconds (so the initial-sync race between the informer's first emit and the immediate first run collapses to a single classification cycle).
 
 #### **Goroutine loop**
 

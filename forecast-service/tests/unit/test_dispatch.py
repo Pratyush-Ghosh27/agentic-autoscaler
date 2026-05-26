@@ -132,3 +132,84 @@ def test_explicit_prophet_override_failure_also_falls_back(
             preferred_model="prophet",
         )
     assert result["model_used"] == "linear_extrap"
+
+
+# -----------------------------------------------------------------------
+# G10: Forecast Service accepts the cold-path-computed Context block.
+#
+# Phase 2's contract is "forward without consuming": dispatch() accepts
+# the validated ContextPayload, logs receipt, and proceeds. Each
+# forecaster gets its context-aware variant in Phase 3 (this is a
+# pure plumbing milestone).
+# -----------------------------------------------------------------------
+
+
+def test_recommend_accepts_context(linear_series_30: list[float]) -> None:
+    """A valid ContextPayload flows through recommend() and the result
+    is identical (model selection unchanged). The point of this test
+    is the absence of a TypeError on the kwarg, plus that the model
+    behaviour is unaffected — Phase 3 is where context starts to bite."""
+    from forecast.models import ContextPayload
+
+    ctx = ContextPayload(
+        baseline_rps=50,
+        peak_p95_rps=200,
+        trend_24h_slope=0.5,
+        hourly_profile=[10] * 24,
+        hourly_profile_valid=True,
+        current_hour_utc=14,
+        current_minute_utc=30,
+    )
+    result = recommend(
+        rps_history=linear_series_30,
+        horizon_minutes=10,
+        prophet_min_points=30,
+        preferred_model=None,
+        context=ctx,
+    )
+    assert result["predicted_rps"] >= 0
+    assert result["model_used"] in ("prophet", "linear_extrap")
+
+
+def test_recommend_accepts_none_context(linear_series_30: list[float]) -> None:
+    """None context is the cold-start signal and must not be a TypeError."""
+    result = recommend(
+        rps_history=linear_series_30,
+        horizon_minutes=10,
+        prophet_min_points=30,
+        preferred_model=None,
+        context=None,
+    )
+    assert result["predicted_rps"] >= 0
+
+
+def test_recommend_context_does_not_change_selection(
+    linear_series_30: list[float],
+) -> None:
+    """In Phase 2 context is forwarded but not consumed; the model
+    chosen with vs. without context must be identical."""
+    from forecast.models import ContextPayload
+
+    ctx = ContextPayload(
+        baseline_rps=50,
+        peak_p95_rps=200,
+        trend_24h_slope=0.5,
+        hourly_profile=[10] * 24,
+        hourly_profile_valid=True,
+        current_hour_utc=14,
+        current_minute_utc=30,
+    )
+    without = recommend(
+        rps_history=linear_series_30,
+        horizon_minutes=10,
+        prophet_min_points=30,
+    )
+    with_ctx = recommend(
+        rps_history=linear_series_30,
+        horizon_minutes=10,
+        prophet_min_points=30,
+        context=ctx,
+    )
+    assert without["model_used"] == with_ctx["model_used"]
+    # predicted_rps may differ slightly across runs due to Prophet's
+    # internal MCMC; assert only on the model_used contract here.

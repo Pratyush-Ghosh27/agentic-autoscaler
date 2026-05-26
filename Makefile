@@ -100,7 +100,7 @@ ollama-pull-ci: ## Pull the CI Ollama model (smaller).
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole, and CRD manifests.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook \
+	$(CONTROLLER_GEN) rbac:roleName=manager-role crd:allowDangerousTypes=true webhook \
 	  paths=$(CONTROLLER_GEN_PATHS) \
 	  output:crd:artifacts:config=config/crd/bases
 

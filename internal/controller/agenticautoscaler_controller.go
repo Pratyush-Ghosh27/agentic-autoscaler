@@ -169,6 +169,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		RpsHistory:     rpsHistory,
 		WorkloadID:     req.NamespacedName.String(),
 		PreferredModel: preferredModel,
+		Context:        r.buildForecastContext(&aas),
 	})
 	if err != nil {
 		log.Error(err, "forecast service call failed")
@@ -203,7 +204,10 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	rpsPerPodMax := derefOr(aas.Spec.RpsPerPodMax, 500)
 	now := r.now()
 	lastScale := laterOf(state.LastScaleUpTime, state.LastScaleDownTime)
-	if decision.ShouldUpdateRpsPerPod(currentRPS, currentReplicas, lastScale, now, r.Config.ReconcileInterval) {
+	if decision.ShouldUpdateRpsPerPodWithFloor(
+		currentRPS, currentReplicas, lastScale, now,
+		r.Config.ReconcileInterval, float64(r.Config.RpsPerPodNoiseFloorRPS),
+	) {
 		state.Observations.Push(currentRPS / float64(currentReplicas))
 		state.RpsPerPod = state.Observations.Median()
 	}
@@ -269,7 +273,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			TargetReplicas:        capOut.Target,
 			CurrentRPS:            currentRPS,
 			PredictedRPS:          forecastResp.PredictedRPS,
-			HorizonMinutes:        int(r.Config.ForecastHorizon / time.Minute),
+			HorizonMinutes:        forecastResp.HorizonMinutes,
 			ModelUsed:             forecastResp.ModelUsed,
 			Pattern:               classifiedPattern(&aas),
 			Confidence:            classifiedConfidence(&aas),
@@ -373,6 +377,45 @@ func (r *AgenticAutoscalerReconciler) buildParamSources(aas *autoscalingv1alpha1
 		}
 	}
 	return src
+}
+
+// AnnotationSkipContext, when set to "true", suppresses forwarding of
+// the cold-path-computed Context block on /recommend even if status
+// has it. Used for canary / fallback debugging when an operator wants
+// to compare forecasts with vs. without context. G10.
+const AnnotationSkipContext = "autoscaling.agentic.io/skip-context"
+
+// buildForecastContext converts status.classifiedParams.context into
+// a wire-side ContextPayload, stamping CurrentHourUTC and
+// CurrentMinuteUTC from the controller's clock. Returns nil when:
+//   - status.classifiedParams is missing (cold start, before the
+//     classifier worker has produced anything), or
+//   - status.classifiedParams.context is missing (legacy data), or
+//   - the operator has set the skip-context annotation.
+//
+// nil is the "omitempty" signal — the JSON encoder drops the field
+// from the wire so the Forecast Service treats the request as
+// context-less. G10.
+func (r *AgenticAutoscalerReconciler) buildForecastContext(aas *autoscalingv1alpha1.AgenticAutoscaler) *forecast.ContextPayload {
+	if aas.Annotations[AnnotationSkipContext] == "true" {
+		return nil
+	}
+	cp := aas.Status.ClassifiedParams
+	if cp == nil || cp.Context == nil {
+		return nil
+	}
+	now := r.now().UTC()
+	return &forecast.ContextPayload{
+		BaselineRPS:        cp.Context.BaselineRPS,
+		PeakP95RPS:         cp.Context.PeakP95RPS,
+		Trend24hSlope:      cp.Context.Trend24hSlope,
+		HourlyProfile:      cp.Context.HourlyProfile,
+		HourlyProfileValid: cp.Context.HourlyProfileValid,
+		// time.Hour() returns 0..23 and time.Minute() returns 0..59;
+		// the int32 narrowing is safe.
+		CurrentHourUTC:   int32(now.Hour()),   //nolint:gosec // G115: bounded 0..23
+		CurrentMinuteUTC: int32(now.Minute()), //nolint:gosec // G115: bounded 0..59
+	}
 }
 
 // buildStatusSeed converts the persisted Status into a StatusSeed used for

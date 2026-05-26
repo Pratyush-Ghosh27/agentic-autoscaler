@@ -160,6 +160,53 @@ spec:
                     - high
                     - medium
                     type: string
+                  context:
+                    description: |-
+                      Context carries cold-path-computed scalar features that the hot path
+                      forwards verbatim to the Forecast Service. See docs/design_v2.md
+                      §6.1 step 6.5 (computation) and §6.3 (forwarding contract).
+                    properties:
+                      baselineRps:
+                        description: |-
+                          BaselineRPS is the median RPS over the cold-path history window
+                          (typically 7 days at 5-min cadence). Integer rps.
+                        format: int32
+                        type: integer
+                      hourlyProfile:
+                        description: |-
+                          HourlyProfile is a 24-bin median-of-RPS-per-UTC-hour profile.
+                          Index 0 = 00:00 UTC … index 23 = 23:00 UTC. Bins with insufficient
+                          samples are filled by interpolation; HourlyProfileValid records
+                          whether the whole profile met the minimum-sample threshold.
+                        items:
+                          format: int32
+                          type: integer
+                        maxItems: 24
+                        type: array
+                      hourlyProfileValid:
+                        description: |-
+                          HourlyProfileValid is true iff every UTC-hour bin had at least
+                          HOURLY_PROFILE_MIN_HOURS samples in the history window. Forecasters
+                          must ignore HourlyProfile when this is false.
+                        type: boolean
+                      peakP95Rps:
+                        description: |-
+                          PeakP95RPS is the 95th-percentile RPS over the cold-path history
+                          window. Integer rps.
+                        format: int32
+                        type: integer
+                      trend24hSlope:
+                        description: |-
+                          Trend24hSlope is the 24-hour rolling trend slope, units rps/min.
+                          Positive means rising load, negative means falling. See F18.
+                        type: number
+                    required:
+                    - baselineRps
+                    - hourlyProfile
+                    - hourlyProfileValid
+                    - peakP95Rps
+                    - trend24hSlope
+                    type: object
                   historyPoints:
                     description: HistoryPoints is the count of Prometheus data points
                       used.

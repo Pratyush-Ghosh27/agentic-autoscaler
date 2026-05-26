@@ -23,15 +23,41 @@ import (
 	"sort"
 )
 
-// TodLag is the lag (in samples / minutes) used by the time-of-day
-// correlation. 60 minutes maps to "1 hour ago vs now" — sufficient to
-// detect periodic workloads that repeat within an hour.
+// TodLag is the legacy 1-min-cadence hourly-autocorr lag. It is kept
+// only for v1 callers; new code should use HourlyAutocorrLag(resolutionMin).
+// At the v2 default cold-path resolution of 5 minutes the correct lag
+// is 12 (= 60/5), not 60.
 const TodLag = 60
 
 // MinTodOverlap is the minimum number of overlapping samples required
-// for a meaningful Pearson correlation. With TodLag=60 and Overlap=10,
-// we need at least 70 points before tod_correlation can be computed.
+// for a meaningful Pearson correlation. With lag = 60/resolutionMin
+// and Overlap=10, we need at least lag+10 points before
+// hourly_autocorr can be computed. At resolution=5 that's 22 points;
+// at resolution=1 that's 70 (matching v1).
 const MinTodOverlap = 10
+
+// CVGuardMeanRPS is the threshold below which CV is forced to zero
+// (to avoid amplifying noise on idle services) and which doubles as
+// the floor on the peakToTrough denominator (F28: peakToTrough =
+// p99 / max(mean, CVGuardMeanRPS)). It is a package-level variable so
+// the cold-path worker can override it from config.CVGuardMeanRPS at
+// startup; unit tests rely on the 1.0 default. F29.
+var CVGuardMeanRPS float64 = 1.0
+
+// HourlyAutocorrLag returns the lag (in samples) corresponding to one
+// hour at the given downsample resolution. For the v2 cold path at
+// 5-min cadence the lag is 12; for the legacy 1-min cadence the lag
+// is 60 (matching the deprecated TodLag constant).
+//
+// Returns 0 for non-positive resolutions to avoid division-by-zero;
+// config.validate() catches a misconfigured ContextResolutionMinutes
+// before a real classifier run reaches this code path. F4a + G11.
+func HourlyAutocorrLag(resolutionMin int) int {
+	if resolutionMin <= 0 {
+		return 0
+	}
+	return 60 / resolutionMin
+}
 
 // Features holds the four extracted features from design §7.
 type Features struct {
@@ -64,13 +90,23 @@ func ExtractFeatures(series []float64) Features {
 	m := mean(series)
 	sd := stddev(series, m)
 
+	// F29: zero-guard the CV computation on idle services. Below
+	// CVGuardMeanRPS, `sd / m` would amplify floating-point noise into
+	// a meaningless ratio; we set CV to 0 so downstream classification
+	// treats the workload as flat instead of spiky.
 	var cv float64
-	if m >= 1 {
+	if m >= CVGuardMeanRPS {
 		cv = sd / m
 	}
 
+	// F28: clamp the peakToTrough denominator to max(mean, CVGuardMeanRPS).
+	// The old `mean + 1` denominator silently shrank the ratio for any
+	// workload with mean > 0 — at high mean this barely mattered, but
+	// it also blurred the boundary between "low-traffic with one spike"
+	// and "real spiky pattern". Using max(mean, guard) keeps small
+	// services from inflating their peak-to-trough ratio.
 	p99 := percentile(series, 0.99)
-	peakToTrough := p99 / (m + 1)
+	peakToTrough := p99 / math.Max(m, CVGuardMeanRPS)
 
 	slope := trendSlope(series)
 
@@ -142,6 +178,91 @@ func percentile(s []float64, p float64) float64 {
 	return sorted[idx]
 }
 
+// median returns the middle value of the series (mean of the two
+// middle values for even-length series). Used by the cold-path
+// context computations (baseline_rps, hourly_profile per-bin) where
+// outlier resistance is more important than mean's smoothness.
+func median(s []float64) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(s))
+	copy(sorted, s)
+	sort.Float64s(sorted)
+	n := len(sorted)
+	if n%2 == 0 {
+		return (sorted[n/2-1] + sorted[n/2]) / 2
+	}
+	return sorted[n/2]
+}
+
+// -----------------------------------------------------------------------
+// Context-field producers — G10 + G11
+// -----------------------------------------------------------------------
+
+// ComputeBaselineRPS returns the median RPS over the cold-path
+// history window, rounded to int. Used as `baseline_rps` in the
+// status `context` block. Median (not mean) so a few outliers don't
+// shift the baseline. G10.
+func ComputeBaselineRPS(series []float64) int32 {
+	return int32(math.Round(median(series)))
+}
+
+// ComputePeakP95RPS returns the 95th-percentile RPS, rounded to int.
+// Used as `peak_p95_rps` in the status `context` block. p95 (not
+// max) is robust to a single freak burst while still capturing
+// realistic recurring peaks. G10.
+func ComputePeakP95RPS(series []float64) int32 {
+	return int32(math.Round(percentile(series, 0.95)))
+}
+
+// ComputeHourlyProfile returns a 24-bin median-of-RPS-per-UTC-hour
+// profile and a validity flag. The series is bucketed by
+// (sampleIndex / pointsPerHour + startHourUTC) mod 24, so the caller
+// must supply the wall-clock hour of series[0] in startHourUTC.
+//
+// `valid` is true iff at least minHours distinct hours had at least
+// one sample. Forecasters consume `hourly_profile` only when valid is
+// true; otherwise they ignore it.
+//
+// Defends against resolutionMin <= 0 by treating pointsPerHour as 1
+// (effectively "every sample is its own hour bucket"); the function
+// never panics or div-by-zeros. config.validate() catches the bad
+// config in production. G11.
+func ComputeHourlyProfile(series []float64, resolutionMin, startHourUTC, minHours int) ([]int32, bool) {
+	profile := make([]int32, 24)
+	if len(series) == 0 {
+		return profile, false
+	}
+	if resolutionMin < 1 {
+		// Defensive: a misconfigured caller would otherwise divide by
+		// zero. Treating each sample as one hour bucket degrades
+		// gracefully — config.validate() catches this in production.
+		resolutionMin = 60
+	}
+	pointsPerHour := 60 / resolutionMin
+	if pointsPerHour < 1 {
+		pointsPerHour = 1
+	}
+	if startHourUTC < 0 {
+		startHourUTC = 0
+	}
+	buckets := make([][]float64, 24)
+	for i, v := range series {
+		hourOffset := i / pointsPerHour
+		hour := (startHourUTC + hourOffset) % 24
+		buckets[hour] = append(buckets[hour], v)
+	}
+	distinctHours := 0
+	for h := 0; h < 24; h++ {
+		if len(buckets[h]) > 0 {
+			profile[h] = int32(math.Round(median(buckets[h])))
+			distinctHours++
+		}
+	}
+	return profile, distinctHours >= minHours
+}
+
 func todCorrelation(series []float64, lag, minOverlap int) float64 {
 	n := len(series)
 	if n < lag+minOverlap {
@@ -163,6 +284,24 @@ func todCorrelation(series []float64, lag, minOverlap int) float64 {
 		return 0
 	}
 	return num / math.Sqrt(sx*sy)
+}
+
+// TrendSlopeRpsPerMin computes the least-squares slope and converts
+// from rps/sample to rps/min by dividing by resolutionMin. The
+// `gradual_ramp` daily-drift rule (F26) and the `trend_24h_slope`
+// context field (G10) both expect rps/min — using TrendSlopeRpsPerMin
+// at the configured cold-path resolution keeps both unit-correct
+// regardless of cadence.
+//
+// At resolutionMin <= 0 we fall back to the raw rps/sample slope
+// (config.validate() catches bad resolutions before any real cold-path
+// run reaches this code). F18 + G11.
+func TrendSlopeRpsPerMin(series []float64, resolutionMin int) float64 {
+	raw := trendSlope(series)
+	if resolutionMin <= 0 {
+		return raw
+	}
+	return raw / float64(resolutionMin)
 }
 
 // trendSlope returns the least-squares slope of the series.

@@ -14,9 +14,14 @@ const (
 	ScaleUpCooldownHardFloor   = int32(30)
 	ScaleUpCooldownHardCeiling = int32(180)
 
-	BaseScaleDownCooldown        = 180.0
-	KCVDown                      = 1.5
-	KTodDown                     = 0.5
+	BaseScaleDownCooldown = 180.0
+	KCVDown               = 1.5
+	// KPeriodicDown was named KTodDown in v1 (when the feature was
+	// `tod_correlation`). v2 generalised the feature to
+	// `hourly_autocorr` and the user-visible pattern label to
+	// `periodic`, so the constant is renamed for symmetry. See F13
+	// and design_v2.md §7.
+	KPeriodicDown                = 0.5
 	ScaleDownCooldownHardFloor   = int32(60)
 	ScaleDownCooldownHardCeiling = int32(600)
 
@@ -51,7 +56,7 @@ type ClassifiedOutput struct {
 //
 //	scaleUpCooldown   = clamp(round(BASE_UP / (1 + K_CV_UP*cv)), floor, ceiling)
 //	scaleDownCooldown = clamp(round(BASE_DOWN * (1 + K_CV_DOWN*cv)
-//	                          / (1 + K_TOD_DOWN*max(0, tod))), floor, ceiling)
+//	                          / (1 + K_PERIODIC_DOWN*max(0, tod))), floor, ceiling)
 //	maxStep           = clamp(ceil(log2(peak_to_trough)), 1, max-min)
 //	preferredForecaster = "prophet" when tod>0.70 OR |trend|>2.0
 //	                      "linear_extrap" otherwise
@@ -64,7 +69,7 @@ func ComputeParams(f Features, minReplicas, maxReplicas int32) ClassifiedOutput 
 		ScaleUpCooldownHardFloor, ScaleUpCooldownHardCeiling)
 
 	todFactor := math.Max(0, f.TodCorrelation)
-	rawDown := BaseScaleDownCooldown * (1 + KCVDown*f.CV) / (1 + KTodDown*todFactor)
+	rawDown := BaseScaleDownCooldown * (1 + KCVDown*f.CV) / (1 + KPeriodicDown*todFactor)
 	scaleDown := clampInt32(int32(math.Round(rawDown)),
 		ScaleDownCooldownHardFloor, ScaleDownCooldownHardCeiling)
 

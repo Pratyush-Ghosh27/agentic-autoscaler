@@ -71,3 +71,72 @@ def test_metrics_endpoint_returns_prometheus_format(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.text
     assert "forecast_prophet_failures_total" in body
+
+
+def test_recommend_endpoint_accepts_context(periodic_series_120: list[float]) -> None:
+    """G10: the /recommend endpoint accepts a `context` block and
+    returns a 200 with the same shape as a context-less request.
+    Phase 2 ships forwarding only — Phase 3 will prove that
+    context_aware vs. context_less responses differ for periodic
+    workloads."""
+    client = TestClient(app)
+    payload = {
+        "rps_history": periodic_series_120,
+        "context": {
+            "baseline_rps": 50,
+            "peak_p95_rps": 200,
+            "trend_24h_slope": 0.5,
+            "hourly_profile": [10] * 24,
+            "hourly_profile_valid": True,
+            "current_hour_utc": 14,
+            "current_minute_utc": 30,
+        },
+    }
+    resp = client.post("/recommend", json=payload)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["predicted_rps"] >= 0
+    assert body["model_used"] in ("prophet", "linear_extrap")
+
+
+def test_recommend_endpoint_rejects_malformed_context(
+    periodic_series_120: list[float],
+) -> None:
+    """A short hourly_profile is a 422 from FastAPI (Pydantic catches
+    the constraint violation in app.models)."""
+    client = TestClient(app)
+    payload = {
+        "rps_history": periodic_series_120,
+        "context": {
+            "baseline_rps": 50,
+            "peak_p95_rps": 200,
+            "trend_24h_slope": 0.5,
+            "hourly_profile": [10] * 5,
+            "hourly_profile_valid": True,
+            "current_hour_utc": 14,
+            "current_minute_utc": 30,
+        },
+    }
+    resp = client.post("/recommend", json=payload)
+    assert resp.status_code == 422
+
+
+def test_v2_env_vars_have_defaults() -> None:
+    """G21, F24: every v2 env var has a sensible default so existing
+    operators upgrade without setting anything new. Pinning these as
+    module attributes lets the dispatch layer read them once and avoids
+    scattering os.environ.get calls across the codebase."""
+    from forecast import app as app_mod
+
+    assert app_mod.FORECAST_HORIZON_MINUTES == 10
+    assert app_mod.PROPHET_MIN_POINTS == 30, (
+        "F2a-revisited: lowered from 60 to 30 (Prophet self-gates short histories)"
+    )
+    assert app_mod.LINEAR_EXTRAP_RECENT_WEIGHT == 0.7
+    assert app_mod.LINEAR_EXTRAP_WINDOW_MINUTES == 10
+    assert app_mod.GBDT_QUANTILE == 0.90
+    assert app_mod.GBDT_MIN_POINTS == 30, "F24: configurable for ops tuning"
+    assert app_mod.PROPHET_USE_HOURLY_REGRESSOR is True
+    assert app_mod.HOURLY_PROFILE_MIN_HOURS == 12, (
+        "G11: mirrored on the service for context validation"
+    )

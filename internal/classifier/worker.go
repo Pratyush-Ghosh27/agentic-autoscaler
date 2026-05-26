@@ -52,6 +52,20 @@ type WorkerConfig struct {
 	MinPoints      int
 	HighConfPoints int
 	DedupSeconds   int
+
+	// ResolutionMin is the cold-path PromQL step in minutes (default
+	// in v2: 5). When zero or negative the worker falls back to a
+	// 1-minute step and the legacy RunPipeline so existing v1 callers
+	// keep their behaviour.
+	ResolutionMin int
+	// HourlyProfileMinHours is the minimum number of distinct UTC
+	// hours that must be populated for ContextOutput.HourlyProfileValid
+	// to be true. Default 12. G11.
+	HourlyProfileMinHours int
+	// CVGuardMeanRPS is the per-deployment override for the mean-RPS
+	// floor below which CV is forced to 0 and which clamps the
+	// peakToTrough denominator. F29 + F32c.
+	CVGuardMeanRPS float64
 }
 
 // Worker is the cold-path classification goroutine for one
@@ -183,12 +197,22 @@ func (w *Worker) runOnce(ctx context.Context) (keepGoing bool) {
 // All failure modes (Prometheus error, insufficient points, CR not found,
 // patch failure) log and emit a degraded-state event but never panic, so
 // the worker keeps running.
+//
+// When WorkerConfig.ResolutionMin > 0 the worker queries Prometheus at
+// that step (default v2: 5m) and runs RunPipelineV2 so the cold-path
+// context block is computed and patched onto status. Otherwise it
+// preserves v1 semantics: a 1-minute step and RunPipeline (no context).
 func (w *Worker) runClassification(ctx context.Context, logger logr.Logger) bool {
 	end := w.Now()
 	start := end.Add(-w.Config.HistoryHours)
 
+	step := time.Duration(w.Config.ResolutionMin) * time.Minute
+	if step <= 0 {
+		step = time.Minute
+	}
+
 	samples, err := w.Prom.RangeQuery(ctx,
-		promql.RangeRPS(w.DeploymentName), start, end, time.Minute)
+		promql.RangeRPS(w.DeploymentName), start, end, step)
 	if err != nil {
 		logger.Error(err, "prometheus range query failed")
 		return false
@@ -199,13 +223,39 @@ func (w *Worker) runClassification(ctx context.Context, logger logr.Logger) bool
 		series[i] = s.Value
 	}
 
+	if w.Config.ResolutionMin > 0 {
+		cfg := PipelineConfig{
+			ResolutionMin:         w.Config.ResolutionMin,
+			HourlyProfileMinHours: w.Config.HourlyProfileMinHours,
+			CVGuardMeanRPS:        w.Config.CVGuardMeanRPS,
+			StartHourUTC:          start.UTC().Hour(),
+		}
+		v2Result, v2Err := RunPipelineV2(series,
+			w.Config.HighConfPoints, w.Config.MinPoints,
+			w.MinReplicas, w.MaxReplicas, cfg)
+		if v2Err != nil {
+			w.emitEvent(ctx, reasoning.PatternUnknown,
+				fmt.Sprintf("insufficient history: %d points (need %d)",
+					len(series), w.Config.MinPoints))
+			return false
+		}
+		if patchErr := w.patchStatusV2(ctx, v2Result); patchErr != nil {
+			logger.Error(patchErr, "failed to patch classifiedParams")
+			return false
+		}
+		w.lastClassifyAt = w.Now()
+		w.emitEvent(ctx, reasoning.PatternClassified,
+			formatClassifiedMessage(v2Result.PipelineResult))
+		return true
+	}
+
 	result, err := RunPipeline(series,
 		w.Config.HighConfPoints, w.Config.MinPoints,
 		w.MinReplicas, w.MaxReplicas)
 	if err != nil {
 		// Insufficient points — a *normal* steady state (just-deployed
 		// targets, brief outages). Log + Event, continue.
-		w.emitEvent(ctx, corev1.EventTypeNormal, reasoning.PatternUnknown,
+		w.emitEvent(ctx, reasoning.PatternUnknown,
 			fmt.Sprintf("insufficient history: %d points (need %d)",
 				len(series), w.Config.MinPoints))
 		return false
@@ -218,7 +268,7 @@ func (w *Worker) runClassification(ctx context.Context, logger logr.Logger) bool
 
 	w.lastClassifyAt = w.Now()
 
-	w.emitEvent(ctx, corev1.EventTypeNormal, reasoning.PatternClassified,
+	w.emitEvent(ctx, reasoning.PatternClassified,
 		formatClassifiedMessage(result))
 	return true
 }
@@ -242,6 +292,40 @@ func (w *Worker) patchStatus(ctx context.Context, result PipelineResult) error {
 		HistoryPoints:            historyPointsAsInt32(result.HistoryPoints),
 		Confidence:               result.Confidence,
 	}
+
+	return w.Client.Status().Update(ctx, &aas)
+}
+
+// patchStatusV2 mirrors patchStatus but additionally writes the
+// cold-path-computed Context block. The hot-path reconciler will read
+// status.classifiedParams.context and forward it verbatim to the
+// Forecast Service in T14. G10 + G11.
+func (w *Worker) patchStatusV2(ctx context.Context, result PipelineResultV2) error {
+	var aas autoscalingv1alpha1.AgenticAutoscaler
+	if err := w.Client.Get(ctx, w.Key, &aas); err != nil {
+		return fmt.Errorf("get CR: %w", err)
+	}
+
+	cp := &autoscalingv1alpha1.ClassifiedParams{
+		Pattern:                  result.Pattern,
+		ScaleUpCooldownSeconds:   result.Params.ScaleUpCooldown,
+		ScaleDownCooldownSeconds: result.Params.ScaleDownCooldown,
+		MaxStepSize:              result.Params.MaxStep,
+		PreferredForecaster:      result.Params.PreferredForecaster,
+		ClassifiedAt:             metav1.NewTime(w.Now()),
+		HistoryPoints:            historyPointsAsInt32(result.HistoryPoints),
+		Confidence:               result.Confidence,
+	}
+	if result.Context != nil {
+		cp.Context = &autoscalingv1alpha1.ContextFields{
+			BaselineRPS:        result.Context.BaselineRPS,
+			PeakP95RPS:         result.Context.PeakP95RPS,
+			Trend24hSlope:      result.Context.Trend24hSlope,
+			HourlyProfile:      result.Context.HourlyProfile,
+			HourlyProfileValid: result.Context.HourlyProfileValid,
+		}
+	}
+	aas.Status.ClassifiedParams = cp
 
 	return w.Client.Status().Update(ctx, &aas)
 }
@@ -272,7 +356,12 @@ func (w *Worker) removeReclassifyAnnotation(ctx context.Context, logger logr.Log
 // emitEvent looks up the CR (so the EventRecorder has an involvedObject)
 // and records the event. If the CR cannot be fetched we silently skip —
 // a missing CR means we're racing a delete; nothing to do.
-func (w *Worker) emitEvent(ctx context.Context, eventType, reason, message string) {
+//
+// Event type is always Normal (Warning-class transitions are surfaced
+// via controller logs + metrics, not via Events, to keep the apiserver
+// event budget bounded on noisy clusters). If a future caller needs a
+// Warning event, reintroduce the parameter then.
+func (w *Worker) emitEvent(ctx context.Context, reason, message string) {
 	if w.EventRecorder == nil {
 		return
 	}
@@ -280,7 +369,7 @@ func (w *Worker) emitEvent(ctx context.Context, eventType, reason, message strin
 	if err := w.Client.Get(ctx, w.Key, &aas); err != nil {
 		return
 	}
-	w.EventRecorder.Event(&aas, eventType, reason, message)
+	w.EventRecorder.Event(&aas, corev1.EventTypeNormal, reason, message)
 }
 
 // formatClassifiedMessage builds the structured event message used both

@@ -138,6 +138,72 @@ func TestRecommend_NegativePredictedReturnsErrInvalidResponse(t *testing.T) {
 	assert.ErrorIs(t, err, forecast.ErrInvalidResponse)
 }
 
+// TestRecommend_ContextOnWire pins that ContextPayload is serialised
+// under the "context" key with the snake_case field names that the
+// Forecast Service Pydantic model expects (G10).
+func TestRecommend_ContextOnWire(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"predicted_rps":150,"horizon_minutes":10,"model_used":"prophet"}`))
+	}))
+	defer srv.Close()
+
+	c := forecast.New(srv.URL, 1*time.Second)
+	_, err := c.Recommend(context.Background(), forecast.RecommendRequest{
+		RpsHistory: []float64{100, 110, 120},
+		Context: &forecast.ContextPayload{
+			BaselineRPS:        50,
+			PeakP95RPS:         200,
+			Trend24hSlope:      0.5,
+			HourlyProfile:      []int32{10, 12, 14, 18, 22, 30, 50, 80, 100, 120, 140, 150, 150, 145, 140, 130, 110, 95, 80, 60, 40, 25, 15, 10},
+			HourlyProfileValid: true,
+			CurrentHourUTC:     14,
+			CurrentMinuteUTC:   30,
+		},
+	})
+	require.NoError(t, err)
+
+	ctx, ok := captured["context"].(map[string]any)
+	require.True(t, ok, "context should be a JSON object on the wire, got: %v", captured["context"])
+	assert.Equal(t, 50.0, ctx["baseline_rps"])
+	assert.Equal(t, 200.0, ctx["peak_p95_rps"])
+	assert.InDelta(t, 0.5, ctx["trend_24h_slope"], 0.001)
+	assert.Equal(t, true, ctx["hourly_profile_valid"])
+	assert.Equal(t, 14.0, ctx["current_hour_utc"])
+	assert.Equal(t, 30.0, ctx["current_minute_utc"])
+	hp, ok := ctx["hourly_profile"].([]any)
+	require.True(t, ok)
+	assert.Len(t, hp, 24)
+	assert.Equal(t, 10.0, hp[0])
+	assert.Equal(t, 150.0, hp[11])
+}
+
+// TestRecommend_ContextOmittedWhenNil pins that a nil Context is
+// dropped from the wire (omitempty) so existing requests are
+// byte-identical to v1 and the Forecast Service treats it as absent.
+func TestRecommend_ContextOmittedWhenNil(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"predicted_rps":150,"horizon_minutes":10,"model_used":"prophet"}`))
+	}))
+	defer srv.Close()
+
+	c := forecast.New(srv.URL, 1*time.Second)
+	_, err := c.Recommend(context.Background(), forecast.RecommendRequest{
+		RpsHistory: []float64{100, 110, 120},
+	})
+	require.NoError(t, err)
+
+	_, present := captured["context"]
+	assert.False(t, present, "nil Context must be dropped from the wire (omitempty)")
+}
+
 func TestRecommend_MissingModelUsedReturnsErrInvalidResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

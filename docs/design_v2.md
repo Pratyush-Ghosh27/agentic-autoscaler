@@ -1179,5 +1179,6 @@ The reconciler omits the `context` field in `/recommend` entirely when `status.c
 | ExplainWorker channel already has a queued event when a newer event arrives | Reconciler drains the stale event and replaces it with the new one (drop-and-replace; see §6.2). The stale event is silently discarded; the newer event is what gets explained. |
 | Ollama returns empty content or malformed JSON | Log; no `scale_explained` event emitted. ExplainWorker continues waiting for the next request. |
 | ExplainWorker goroutine panics | Recovered by a `defer`/`recover` wrapper; logged; goroutine restarts after 60s backoff. |
+| `autoscaling.agentic.io/skip-context` annotation is set to `"true"` | Reconciler omits `context` from `/recommend`; Forecast Service falls back to context-free forecasting (no safety caps, no hourly regressor). Annotation persists until cleared by operator; see §4 annotations table. |
 
 No retries within a single reconcile or classification cycle. Just wait for the next trigger. The kill-switch path (annotation set to true) is specified in §5 step 1\.

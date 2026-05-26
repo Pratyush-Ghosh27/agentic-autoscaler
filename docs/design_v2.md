@@ -1207,3 +1207,34 @@ No retries within a single reconcile or classification cycle. Just wait for the 
 | `current_hour_utc` | The controller's UTC hour at request time, forwarded in `context` for Prophet's `ds` anchoring. Per-request, not persisted. | §5 /recommend input |
 | `current_minute_utc` | The controller's UTC minute at request time, forwarded alongside `current_hour_utc`. Closes the F17 minute-level alignment gap. | §5 /recommend input |
 | `K_PERIODIC_DOWN` | Cooldown-down multiplier for the `periodic` pattern. (Spec uses this name; source code may still use the v1 name `K_TOD_DOWN` until the rename lands — see §7 footnote.) | §7 cooldown formula |
+
+## **11\. Acceptance criteria**
+
+Each assertion below is testable in CI (unit, integration, or nightly E2E). The `(G#)` annotation indicates which gap-report-v2 entry delivers the corresponding code change; assertions without a `(G#)` are already covered by v1 CI and remain enforced in v2.
+
+1. CRD `spec.preferredForecaster` enum accepts `prophet`, `linear_extrap`, `gbdt_quantile`, and `auto`. (G20)
+2. Admission webhook rejects any CR with `maxReplicas <= minReplicas` (strict inequality). (G20)
+3. After the first successful classification, `status.classifiedParams.context` is populated with all five fields: `baselineRPS`, `peakP95RPS`, `trend24hSlope`, `hourlyProfile[24]`, `hourlyProfileValid`. (G10, G11)
+4. When `status.classifiedParams.context` is non-nil, the controller forwards a `context` object in every `/recommend` call. (G10)
+5. When `status.classifiedParams.context` is nil (cold start), the controller omits the `context` field from `/recommend` entirely. (G10)
+6. When the `autoscaling.agentic.io/skip-context: "true"` annotation is set, the controller omits `context` from `/recommend` regardless of `status.classifiedParams.context`. (Phase 1 spec)
+7. The Forecast Service `/recommend` endpoint accepts a `context` field, validates its sub-fields, and drops malformed context as a non-error. (G10)
+8. For a `spiky`-classified workload in `auto` mode, `/recommend` returns `model_used != "gbdt_quantile"`. (G12, G19)
+9. For a `spiky` workload with `spec.preferredForecaster: "gbdt_quantile"`, `/recommend` returns `model_used == "gbdt_quantile"`. (G12, G19)
+10. Prophet's `ds[-1]` is anchored so that `utc_hour_of(ds[-1]) == context.current_hour_utc` and `utc_minute_of(ds[-1]) == context.current_minute_utc`, regardless of Forecast Service pod clock. (G14)
+11. When `context.hourlyProfileValid == true` and `PROPHET_USE_HOURLY_REGRESSOR == true`, Prophet adds `hour_baseline` as an external regressor. (G14)
+12. `forecast_linear_extrap` blends the recent slope as `m_blended = LINEAR_EXTRAP_RECENT_WEIGHT * m_window + (1 - LINEAR_EXTRAP_RECENT_WEIGHT) * trend_24h_slope` and recomputes intercept `b = mean(y) - m_blended * mean(x)`. (G15)
+13. `forecast_linear_extrap` clips its prediction at `context.peak_p95_rps * 1.5` when context is present. (G15)
+14. When the forecaster's recommendation exceeds `spec.maxReplicas`, the K8s Event token is `max_replicas_binding`, the message body contains `unboundedRecommended=<N>`, and `status.unboundedRecommended` reflects the pre-clamp value. (G13)
+15. The ExplainWorker prompt contains a `Long-term context:` line whenever `Pattern != ""`. (G18)
+16. The ExplainWorker prompt contains a binding-constraint explanation line when the triggering token is `max_replicas_binding` or `min_replicas_binding`. (G18)
+17. A `/scale` patch (replica change) does NOT trigger re-classification — the `deployment.kubernetes.io/revision` annotation is unchanged by `/scale`, only by rollouts. (G16)
+18. After a controller restart, the per-CR ring buffer's `Seed()` writes 5 copies of the persisted `status.rpsPerPodCurrent`. (G17)
+19. K8s Events have PascalCase `Reason` fields (e.g. `ScaleUp`, `MaxReplicasBinding`); the message body still contains the snake_case token (`scale_up`, `max_replicas_binding`) verbatim. (G22)
+20. Classifier Prometheus query uses 5-min step (`CONTEXT_DOWNSAMPLE_RESOLUTION_MIN` default), and `hourly_autocorr` lag is `60 / CONTEXT_DOWNSAMPLE_RESOLUTION_MIN` (default 12) with the `len(series) < L + 10` guard. (G11)
+21. Classifier `gradual_ramp` rule fires when `abs(trend_slope) * 1440 / max(mean(series), 1.0) > GRADUAL_RAMP_DAILY_DRIFT_FRAC` (default 0.20). (G11)
+22. Classifier `peak_to_trough` feature uses denominator `max(mean(series), 1.0)`. (G11)
+23. `CLASSIFIER_MIN_POINTS` defaults to 72; the validation floor derives from `L + 10 = 22` so the autocorr guard is always satisfiable. (G21)
+24. `RPS_PER_POD_NOISE_FLOOR_RPS`, `GBDT_QUANTILE`, `GBDT_MIN_POINTS`, `PROPHET_USE_HOURLY_REGRESSOR`, `LINEAR_EXTRAP_RECENT_WEIGHT`, `CV_GUARD_MEAN_RPS`, and `HOURLY_PROFILE_MIN_HOURS` are all parseable env vars on the appropriate deployment (controller vs Forecast Service per §4 tables). (G21)
+25. Code constant for the `periodic`-pattern down multiplier is named `KPeriodicDown` (no remaining `K_TOD_DOWN` / `KTodDown` references). (G19, F13)
+26. `auto`-mode selection in the Forecast Service never returns `gbdt_quantile`, regardless of `rps_history` length, classifier output, or context. (G12, F22)

@@ -126,6 +126,47 @@ type ClassifiedParams struct {
 	// otherwise "medium". See docs/design.md §4.
 	// +kubebuilder:validation:Enum=high;medium
 	Confidence string `json:"confidence"`
+
+	// Context carries cold-path-computed scalar features that the hot path
+	// forwards verbatim to the Forecast Service. See docs/design_v2.md
+	// §6.1 step 6.5 (computation) and §6.3 (forwarding contract).
+	// +optional
+	Context *ContextFields `json:"context,omitempty"`
+}
+
+// ContextFields are the cold-path-computed scalar features (and the 24-bin
+// hourly profile) that travel from the classifier worker into the
+// AgenticAutoscaler status, then are forwarded verbatim by the controller
+// to the Forecast Service /recommend endpoint. The forecasters consume
+// these fields to bias predictions when historical context is reliable.
+//
+// All fields are populated together by the same pipeline run; partial
+// population is not supported. The whole object is nil before the first
+// successful classification cycle. See docs/design_v2.md §4 and §6.1.
+type ContextFields struct {
+	// BaselineRPS is the median RPS over the cold-path history window
+	// (typically 7 days at 5-min cadence). Integer rps.
+	BaselineRPS int32 `json:"baselineRps"`
+
+	// PeakP95RPS is the 95th-percentile RPS over the cold-path history
+	// window. Integer rps.
+	PeakP95RPS int32 `json:"peakP95Rps"`
+
+	// Trend24hSlope is the 24-hour rolling trend slope, units rps/min.
+	// Positive means rising load, negative means falling. See F18.
+	Trend24hSlope float64 `json:"trend24hSlope"`
+
+	// HourlyProfile is a 24-bin median-of-RPS-per-UTC-hour profile.
+	// Index 0 = 00:00 UTC … index 23 = 23:00 UTC. Bins with insufficient
+	// samples are filled by interpolation; HourlyProfileValid records
+	// whether the whole profile met the minimum-sample threshold.
+	// +kubebuilder:validation:MaxItems=24
+	HourlyProfile []int32 `json:"hourlyProfile"`
+
+	// HourlyProfileValid is true iff every UTC-hour bin had at least
+	// HOURLY_PROFILE_MIN_HOURS samples in the history window. Forecasters
+	// must ignore HourlyProfile when this is false.
+	HourlyProfileValid bool `json:"hourlyProfileValid"`
 }
 
 // AgenticAutoscalerPhase reflects the controller's high-level state.

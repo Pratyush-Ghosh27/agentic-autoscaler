@@ -52,6 +52,16 @@ type ExplainRequest struct {
 	EffectiveCooldownUp   int32
 	EffectiveCooldownDown int32
 	EffectiveMaxStep      int32
+
+	// G18 — long-term context and CRD-binding fields. Populated by the
+	// reconciler from status.classifiedParams.context and spec.*Replicas
+	// respectively. See docs/design_v2.md §6.2 "ExplainRequest fields".
+	UnboundedRecommended int32 // pre-clamp forecaster ask
+	MaxReplicas          int32 // spec.maxReplicas (used by max_replicas_binding prose)
+	MinReplicas          int32 // spec.minReplicas (used by min_replicas_binding prose)
+	BaselineRPS          int32 // status.classifiedParams.context.baselineRPS (zero if not classified)
+	PeakP95RPS           int32 // status.classifiedParams.context.peakP95RPS (zero if not classified)
+	HourlyProfileValid   bool  // status.classifiedParams.context.hourlyProfileValid
 }
 
 // ExplainNotifier signals the ExplainWorker of a scaling event. The contract

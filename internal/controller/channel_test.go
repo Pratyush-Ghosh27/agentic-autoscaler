@@ -58,6 +58,27 @@ func TestChannelNotifier_ManySends(t *testing.T) {
 	assert.Equal(t, int32(100), req.TargetReplicas)
 }
 
+// TestExplainRequest_HasG18Fields is a compile-time pin: the six fields
+// the G18 prompt template (Task 11-13) consumes must exist on
+// ExplainRequest with the documented types. If any field is renamed or
+// the type changes, this test breaks the build.
+func TestExplainRequest_HasG18Fields(t *testing.T) {
+	r := controller.ExplainRequest{
+		UnboundedRecommended: 15,
+		MaxReplicas:          10,
+		MinReplicas:          2,
+		BaselineRPS:          400,
+		PeakP95RPS:           1200,
+		HourlyProfileValid:   true,
+	}
+	assert.Equal(t, int32(15), r.UnboundedRecommended)
+	assert.Equal(t, int32(10), r.MaxReplicas)
+	assert.Equal(t, int32(2), r.MinReplicas)
+	assert.Equal(t, int32(400), r.BaselineRPS)
+	assert.Equal(t, int32(1200), r.PeakP95RPS)
+	assert.True(t, r.HourlyProfileValid)
+}
+
 // TestChannelNotifier_DropAndReplaceWithBindingToken pins the contract
 // against the G13 MaxReplicasBinding token: when a stale scale_up event
 // is followed by a max_replicas_binding event (which can fire in the same

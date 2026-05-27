@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	controller "github.com/pratyush-ghosh/agentic-autoscaler/internal/controller"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/reasoning"
 )
 
 // TestChannelNotifier_DropAndReplace pins the design.md §6.2 contract:
@@ -55,4 +56,27 @@ func TestChannelNotifier_ManySends(t *testing.T) {
 	}
 	req := <-ch
 	assert.Equal(t, int32(100), req.TargetReplicas)
+}
+
+// TestChannelNotifier_DropAndReplaceWithBindingToken pins the contract
+// against the G13 MaxReplicasBinding token: when a stale scale_up event
+// is followed by a max_replicas_binding event (which can fire in the same
+// reconcile cycle if the forecast jumps over the CRD bound between
+// observations), the binding event must survive — operators must see the
+// most recent capacity-planning signal.
+func TestChannelNotifier_DropAndReplaceWithBindingToken(t *testing.T) {
+	ch := make(chan controller.ExplainRequest, 1)
+	cn := controller.ChannelNotifier{Ch: ch}
+
+	stale := controller.ExplainRequest{Reason: reasoning.ScaleUp, TargetReplicas: 3}
+	fresh := controller.ExplainRequest{Reason: reasoning.MaxReplicasBinding, TargetReplicas: 5}
+
+	cn.Notify(stale)
+	cn.Notify(fresh)
+
+	require.Len(t, ch, 1)
+	got := <-ch
+	assert.Equal(t, reasoning.MaxReplicasBinding, got.Reason,
+		"the most recent notify must be the one consumed")
+	assert.Equal(t, int32(5), got.TargetReplicas)
 }

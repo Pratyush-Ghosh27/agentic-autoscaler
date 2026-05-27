@@ -58,7 +58,11 @@ jobs:
   e2e:
     name: kind + helm + k6 + Prometheus assertions
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Bumped from 60 -> 90 min to accommodate the second k6 scenario (spiky,
+    # 20m) and its gbdt_quantile assertion. The ramp scenario alone is
+    # ~25m of k6 wall time on top of ~10m of build/deploy/wait, so the
+    # original 60m left no headroom for the second scenario.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -151,6 +155,37 @@ jobs:
         # error-rate comparison to keep the agentic-vs-HPA delta
         # apples-to-apples.
         run: TOLERANCE="${TOLERANCE}" WINDOW="${RAMP_HOLD_DURATION}" bash test/e2e/assertions.sh
+
+      # ---- Forecaster lock-in: gbdt_quantile path ----
+      #
+      # The classifier auto-promotes gbdt_quantile only after enough
+      # on-CR history has accumulated to fingerprint a "spiky" pattern,
+      # which takes longer than a single nightly can afford to wait.
+      # To get a deterministic gbdt_quantile run on the nightly clock
+      # we patch the AAS CR's preferredForecaster *first*, then drive
+      # the spiky scenario, then assert on the
+      # forecast_dispatch_total{model_used="gbdt_quantile"} counter.
+      #
+      # See docs/v2-acceptance-coverage.md row 9 and Plan 18 for the
+      # design rationale (and why this is structurally stronger than a
+      # log-grep or a classifier-warm-up wait loop).
+      - name: Force gbdt_quantile via preferredForecaster patch
+        run: |
+          kubectl patch aas/app-agentic -n demo --type=merge \
+            -p '{"spec":{"preferredForecaster":"gbdt_quantile"}}'
+          kubectl get aas/app-agentic -n demo \
+            -o jsonpath='{.spec.preferredForecaster}{"\n"}'
+          # Reconcile interval is 60s by default; sleep 90s so at least
+          # one reconcile observes the patched spec before spiky load
+          # starts hitting /recommend.
+          echo "Sleeping 90s so the controller picks up the patched preferredForecaster..."
+          sleep 90
+
+      - name: Run k6 spiky scenario (in-cluster Job)
+        run: bash deploy/k6/run-incluster.sh spiky
+
+      - name: Assert gbdt_quantile path was exercised
+        run: bash test/e2e/assertions-gbdt.sh
 
       # ---- Failure artifacts ----
       - name: Collect failure artifacts

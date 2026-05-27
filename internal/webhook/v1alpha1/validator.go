@@ -33,10 +33,16 @@ func ValidateSpec(spec *autoscalingv1alpha1.AgenticAutoscalerSpec) error {
 		problems = append(problems, fmt.Sprintf(
 			"minReplicas=%d must be >= 1", *spec.MinReplicas))
 	}
+	// Strict inequality (F37): the §7 maxStep formula
+	// clamp(ceil(log2(peak_to_trough)), 1, maxReplicas - minReplicas)
+	// has an empty clamp range when minReplicas == maxReplicas (lower 1,
+	// upper 0). Rejecting equality at admission eliminates that
+	// degenerate path and forces operators who want a pinned replica
+	// count to use rangeSize=1 (max = min + 1).
 	if spec.MinReplicas != nil && spec.MaxReplicas != nil &&
-		*spec.MaxReplicas < *spec.MinReplicas {
+		*spec.MaxReplicas <= *spec.MinReplicas {
 		problems = append(problems, fmt.Sprintf(
-			"maxReplicas=%d must be >= minReplicas=%d",
+			"maxReplicas=%d must be > minReplicas=%d",
 			*spec.MaxReplicas, *spec.MinReplicas))
 	}
 

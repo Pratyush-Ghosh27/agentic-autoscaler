@@ -82,13 +82,30 @@ func TestValidateSpec_RejectsMaxReplicasBelowMin(t *testing.T) {
 	assert.Contains(t, err.Error(), "minReplicas")
 }
 
-func TestValidateSpec_AcceptsMinEqualsMax(t *testing.T) {
+// TestValidateSpec_RejectsMinEqualsMax pins F37: maxReplicas == minReplicas
+// is rejected at admission. The §7 maxStep formula has an empty clamp
+// range when min == max (lower 1, upper 0), making any maxStep
+// classification a degenerate clamp. Operators who genuinely want a
+// pinned replica count should set min and max one apart and rely on the
+// scaler's hysteresis to keep the deployment at min.
+func TestValidateSpec_RejectsMinEqualsMax(t *testing.T) {
 	cr := validCR()
 	cr.Spec.MinReplicas = ptr32(5)
 	cr.Spec.MaxReplicas = ptr32(5)
 
 	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
-	require.NoError(t, err, "min == max is allowed (pinned replica count)")
+	require.Error(t, err, "min == max must be rejected per F37 strict inequality")
+	assert.Contains(t, err.Error(), "maxReplicas")
+	assert.Contains(t, err.Error(), "minReplicas")
+}
+
+func TestValidateSpec_AcceptsMaxOneAboveMin(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(5)
+	cr.Spec.MaxReplicas = ptr32(6)
+
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err, "max = min+1 is the smallest valid range")
 }
 
 func TestValidateSpec_RejectsRpsPerPodMinZero(t *testing.T) {

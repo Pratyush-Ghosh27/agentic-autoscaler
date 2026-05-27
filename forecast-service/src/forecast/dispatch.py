@@ -36,20 +36,29 @@ def recommend(
 ) -> RecommendResult:
     """Return the predicted RPS using the best available forecaster.
 
-    Selection rules (per docs/design.md §5):
-    1. If preferred_model is "prophet" or "linear_extrap", use it directly.
-    2. Else if len(rps_history) >= prophet_min_points, attempt prophet
-       (and fall through to linear_extrap on exception).
-    3. Else use linear_extrap.
+    Selection rules (per docs/design_v2.md §5):
 
-    "No override" values: None, "auto", "", or any unknown string.
+    1. If ``preferred_model == "gbdt_quantile"``, route through the
+       LightGBM quantile regressor (fall back to ``linear_extrap`` on
+       any exception).
+    2. Else if ``preferred_model in {"prophet", "linear_extrap"}``,
+       use it directly (Prophet falls back to ``linear_extrap`` on
+       exception).
+    3. Else (``preferred_model`` is None / ``"auto"`` / ``""`` /
+       unknown): if ``len(rps_history) >= prophet_min_points`` try
+       Prophet (fall back to ``linear_extrap`` on exception); else
+       use ``linear_extrap`` directly.
 
-    G10 (Phase 2): ``context`` is the cold-path-computed
-    :class:`ContextPayload` (baseline_rps, peak_p95_rps,
-    trend_24h_slope, hourly_profile + validity flag, plus current
-    hour/minute UTC). Phase 2 forwards-without-consuming: each
-    forecaster keeps its current signature, and we only log
-    receipt. Phase 3 wires context into each forecaster's call.
+    F22 invariant: the auto branch (rule 3) **never** selects
+    ``gbdt_quantile`` — that arm is structurally unreachable from the
+    auto path because ``_should_use_prophet`` returns only prophet or
+    linear_extrap. ``gbdt_quantile`` is only reachable via the explicit
+    rule-1 dispatch.
+
+    G10 / G14-G15 (Phase 3): ``context`` is forwarded to every
+    forecaster (Prophet via build_anchored_timestamps + hour_baseline
+    regressor; linear_extrap via trend blend + centroid intercept + p95
+    clip; gbdt_quantile via lag/hour-baseline features + p95 cap).
     """
     if context is not None:
         logging.debug(
@@ -59,6 +68,34 @@ def recommend(
             context.trend_24h_slope,
             context.hourly_profile_valid,
         )
+
+    if preferred_model == "gbdt_quantile":
+        # Local import: gbdt_model pulls in LightGBM, which is a non-trivial
+        # cold start. Skipping the import unless a gbdt request actually
+        # arrives keeps startup cheap for Prophet/linear_extrap-only fleets.
+        from forecast.gbdt_model import forecast_gbdt_quantile
+
+        try:
+            predicted = forecast_gbdt_quantile(
+                rps_history, horizon_minutes, context=context
+            )
+            return {
+                "predicted_rps": predicted,
+                "horizon_minutes": horizon_minutes,
+                "model_used": "gbdt_quantile",
+            }
+        except Exception as exc:  # noqa: BLE001 - fall back on any failure
+            logging.warning(
+                "gbdt_quantile failed, falling back to linear_extrap: %s", exc
+            )
+            predicted = forecast_linear_extrap(
+                rps_history, horizon_minutes, context=context
+            )
+            return {
+                "predicted_rps": predicted,
+                "horizon_minutes": horizon_minutes,
+                "model_used": "linear_extrap",
+            }
 
     use_prophet = _should_use_prophet(
         rps_history=rps_history,

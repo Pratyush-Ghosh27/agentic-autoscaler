@@ -134,6 +134,59 @@ def test_gbdt_caps_prediction_at_peak_p95_times_three() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("env_value", "kind"),
+    [
+        ("not-an-int", "malformed"),
+        ("-5", "non-positive"),
+        ("0", "zero"),
+    ],
+)
+def test_gbdt_min_points_falls_back_to_default_on_bad_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    kind: str,
+) -> None:
+    """T11 defensive: a typo in GBDT_MIN_POINTS must not crash the
+    forecaster — the helper falls back to the documented default
+    (30) regardless of whether the value is non-int, negative, or
+    zero. We exercise the helper indirectly: with a 35-point history
+    and horizon=10 the gate is 30+10=40, so a working-default helper
+    raises the documented ValueError; a broken helper would either
+    crash on int(raw) or use the absurd value and either succeed
+    (wrong) or crash with a LightGBM error."""
+    _ = kind  # name carries the discriminator for the test ID
+    monkeypatch.setenv("GBDT_MIN_POINTS", env_value)
+    with pytest.raises(ValueError, match=r"gbdt_quantile requires"):
+        forecast_gbdt_quantile([50.0] * 35, horizon_minutes=10, context=_ctx())
+
+
+@pytest.mark.parametrize(
+    ("env_value", "kind"),
+    [
+        ("not-a-float", "malformed"),
+        ("-0.5", "negative"),
+        ("1.5", "above-one"),
+        ("0.0", "boundary-zero"),
+        ("1.0", "boundary-one"),
+    ],
+)
+def test_gbdt_quantile_helper_falls_back_to_default_on_bad_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    kind: str,
+) -> None:
+    """T11 defensive: GBDT_QUANTILE outside (0, 1) or non-float falls
+    back to the documented default (0.90). We don't fit a model here
+    because that's already exercised by the slow smoke tests; we just
+    confirm the helper does not propagate the bad value to LightGBM."""
+    from forecast.gbdt_model import GBDT_QUANTILE_DEFAULT, _quantile
+
+    _ = kind
+    monkeypatch.setenv("GBDT_QUANTILE", env_value)
+    assert _quantile() == GBDT_QUANTILE_DEFAULT
+
+
 @pytest.mark.slow
 def test_gbdt_skips_cap_when_peak_p95_is_zero() -> None:
     """T11 (G12): a fresh deployment with no observed traffic has

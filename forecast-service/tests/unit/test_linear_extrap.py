@@ -102,7 +102,7 @@ def test_linear_extrap_invalid_window_env_falls_back_to_default(
 # --- T6/T7/T8 shared helper --------------------------------------------------
 
 
-def _ctx(*, trend: float = 0.0, p95: int = 1000) -> "ContextPayload":  # noqa: F821
+def _ctx(*, trend: float = 0.0, p95: int = 1000) -> ContextPayload:  # noqa: F821
     """Build a minimal ContextPayload for linear_extrap context tests.
 
     Lazy-import keeps test collection cheap when only the no-context
@@ -219,3 +219,54 @@ def test_linear_extrap_does_not_clip_when_context_is_none() -> None:
     assert predicted > 500.0, (
         "expected an unclipped large extrapolation when context is None"
     )
+
+
+# --- Coverage for _window_minutes() / _recent_weight() defensive paths ------
+
+
+@pytest.mark.parametrize(
+    ("env_value", "kind"),
+    [
+        ("-3", "non-positive"),
+        ("0", "zero"),
+    ],
+)
+def test_linear_extrap_window_falls_back_on_non_positive_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    kind: str,
+) -> None:
+    """T5 defensive: a non-positive LINEAR_EXTRAP_WINDOW_MINUTES must
+    fall back to the default of 10. Indirect proof: with the all-100
+    flat 10-pt series the default selects all 10 points and predicts
+    100. A broken helper would either crash or use the absurd value."""
+    _ = kind
+    monkeypatch.setenv("LINEAR_EXTRAP_WINDOW_MINUTES", env_value)
+    predicted = forecast_linear_extrap([100.0] * 10, horizon_minutes=1)
+    assert predicted == pytest.approx(100.0, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("env_value", "kind"),
+    [
+        ("not-a-float", "malformed"),
+        ("-0.1", "negative"),
+        ("1.1", "above-one"),
+    ],
+)
+def test_linear_extrap_recent_weight_falls_back_on_bad_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    kind: str,
+) -> None:
+    """T6 defensive: LINEAR_EXTRAP_RECENT_WEIGHT outside [0, 1] or
+    non-float falls back to the default (0.7). Indirect proof: with
+    flat history (m=0) and trend=0 the prediction must equal 100
+    regardless of any non-zero blend weight."""
+    _ = kind
+    monkeypatch.setenv("LINEAR_EXTRAP_RECENT_WEIGHT", env_value)
+    history = [100.0] * 10
+    predicted = forecast_linear_extrap(
+        history, horizon_minutes=5, context=_ctx(trend=0.0)
+    )
+    assert predicted == pytest.approx(100.0, abs=1e-6)

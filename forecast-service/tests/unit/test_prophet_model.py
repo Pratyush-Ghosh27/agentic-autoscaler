@@ -80,7 +80,7 @@ def test_prophet_accepts_context_kwarg_and_does_not_regress(
 # --- T4: hourly_regressor on/off behaviour (G14) -----------------------------
 
 
-def _ctx_with_profile_validity(*, valid: bool) -> "ContextPayload":  # noqa: F821
+def _ctx_with_profile_validity(*, valid: bool) -> ContextPayload:  # noqa: F821
     """Helper that builds a minimally-populated ContextPayload whose
     only knob is ``hourly_profile_valid``. Imported lazily to keep
     test collection cheap when Prophet tests are skipped."""

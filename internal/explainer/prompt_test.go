@@ -203,6 +203,30 @@ func TestBuildPrompt_NoClippedLineForCooldownReason(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
+// Binding lines — F33 prompt conditionals.
+// -----------------------------------------------------------------------
+
+func TestBuildPrompt_IncludesMaxBindingLine(t *testing.T) {
+	req := baseRequest()
+	req.Reason = reasoning.MaxReplicasBinding
+	req.UnboundedRecommended = 25
+	req.RecommendedReplicas = 10
+	req.TargetReplicas = 10
+	req.MaxReplicas = 10
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user,
+		"This scale was limited by maxReplicas: the forecast asked for 25 replicas but the CRD bound capped it at maxReplicas=10. Raise spec.maxReplicas to let the autoscaler scale further.")
+	assert.NotContains(t, user, "limited by maxStep",
+		"max_replicas_binding and step_capped_* are mutually exclusive")
+}
+
+func TestBuildPrompt_OmitsMaxBindingLineWhenOtherReason(t *testing.T) {
+	req := baseRequest() // Reason = scale_up
+	_, user := explainer.BuildPrompt(req)
+	assert.NotContains(t, user, "limited by maxReplicas")
+}
+
+// -----------------------------------------------------------------------
 // TrimContent.
 // -----------------------------------------------------------------------
 

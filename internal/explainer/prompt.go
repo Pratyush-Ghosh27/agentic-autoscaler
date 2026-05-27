@@ -74,6 +74,15 @@ func BuildPrompt(req controller.ExplainRequest) (system, user string) {
 			req.RecommendedReplicas, req.TargetReplicas, req.EffectiveMaxStep)
 	}
 
+	// F33: max_replicas_binding conditional. Without this prose, the LLM sees
+	// only "Scaling: 5 → 10 (max_replicas_binding)" and generates misleading
+	// "scaled up to handle load" text — hiding the capacity-planning signal.
+	if req.Reason == reasoning.MaxReplicasBinding {
+		fmt.Fprintf(&b,
+			"This scale was limited by maxReplicas: the forecast asked for %d replicas but the CRD bound capped it at maxReplicas=%d. Raise spec.maxReplicas to let the autoscaler scale further.\n",
+			req.UnboundedRecommended, req.MaxReplicas)
+	}
+
 	fmt.Fprintf(&b, "Forecasting model: %s\n", req.ModelUsed)
 	fmt.Fprintf(&b,
 		"Active parameters: scaleUpCooldown=%ds, scaleDownCooldown=%ds, maxStep=%d\n",

@@ -60,3 +60,24 @@ func TestClassifiedParamsContextOptional(t *testing.T) {
 		t.Errorf("zero-value ClassifiedParams must have nil Context, got: %+v", cp.Context)
 	}
 }
+
+// TestAgenticAutoscalerStatus_UnboundedRecommendedFieldExists pins the
+// Plan 15 / G13 status field that surfaces the pre-clamp forecaster ask.
+// When this exceeds Spec.MaxReplicas the CRD bound is the binding
+// constraint; the new MaxReplicasBinding reasoning token (Task 4) and
+// the unboundedRecommended-in-event-message change (Task 7) carry the
+// same signal downstream. See docs/design_v2.md §5 step 5.
+func TestAgenticAutoscalerStatus_UnboundedRecommendedFieldExists(t *testing.T) {
+	s := AgenticAutoscalerStatus{
+		RecommendedReplicas:  10,
+		UnboundedRecommended: 15,
+	}
+	if s.UnboundedRecommended != 15 {
+		t.Errorf("UnboundedRecommended round-trip failed: got %d, want 15",
+			s.UnboundedRecommended)
+	}
+	if s.RecommendedReplicas != 10 {
+		t.Errorf("RecommendedReplicas round-trip failed: got %d, want 10",
+			s.RecommendedReplicas)
+	}
+}

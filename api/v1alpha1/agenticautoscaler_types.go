@@ -206,6 +206,14 @@ type AgenticAutoscalerStatus struct {
 	// +optional
 	RecommendedReplicas int32 `json:"recommendedReplicas,omitempty"`
 
+	// UnboundedRecommended is the raw forecaster-driven replica count, pre-clamp.
+	// When this exceeds Spec.MaxReplicas the CRD bound is the binding constraint;
+	// when it is below Spec.MinReplicas the floor is binding. Equals
+	// RecommendedReplicas in the common case. See docs/design_v2.md §5 step 5
+	// and §6.2 "Field provenance" for the capacity-planning intent.
+	// +optional
+	UnboundedRecommended int32 `json:"unboundedRecommended,omitempty"`
+
 	// PredictedRPS is the most recent forecast.
 	// +optional
 	PredictedRPS int32 `json:"predictedRPS,omitempty"`

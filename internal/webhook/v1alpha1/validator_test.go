@@ -169,6 +169,31 @@ func TestValidateSpec_AcceptsMaxStepSizeAtRange(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestValidateSpec_AcceptsMaxStepSizeOneWithMinimalRange — F37 boundary
+// pin: with the smallest valid range (max - min = 1), maxStepSize=1
+// must still be accepted. No code change in T7; the existing
+// rangeSize calculation handles this correctly. The test guards
+// against regression if the maxStepSize check is ever rewritten.
+func TestValidateSpec_AcceptsMaxStepSizeOneWithMinimalRange(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(5)
+	cr.Spec.MaxReplicas = ptr32(6)
+	cr.Spec.MaxStepSize = ptr32(1)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.NoError(t, err, "max - min = 1, maxStepSize = 1 — at boundary")
+}
+
+func TestValidateSpec_RejectsMaxStepSizeTwoWithMinimalRange(t *testing.T) {
+	cr := validCR()
+	cr.Spec.MinReplicas = ptr32(5)
+	cr.Spec.MaxReplicas = ptr32(6)
+	cr.Spec.MaxStepSize = ptr32(2)
+	err := webhookv1alpha1.ValidateSpec(&cr.Spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maxStepSize")
+	assert.Contains(t, err.Error(), "maxReplicas - minReplicas")
+}
+
 func TestValidateSpec_AcceptsCooldownsNil(t *testing.T) {
 	cr := validCR()
 	cr.Spec.ScaleUpCooldownSeconds = nil

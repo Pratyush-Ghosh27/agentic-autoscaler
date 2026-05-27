@@ -248,7 +248,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Recent scaling Events emitted by the controller. Reasons: scale_up, scale_down, step_capped_*, cooldown_holding_*, no_change, kill_switched, conflict_detected.",
+      "description": "Recent scaling Events emitted by the controller. The `reason` label uses the canonical snake_case identifiers: scale_up, scale_down, no_change, step_capped_up, step_capped_down, cooldown_holding_up, cooldown_holding_down, max_replicas_binding, min_replicas_binding, kill_switched, conflict_detected, forecast_unavailable, metrics_unavailable. (K8s Event Reason fields are PascalCase per K8s convention; this metric continues to use snake_case for searchability.)",
       "gridPos": {
         "h": 8,
         "w": 12,

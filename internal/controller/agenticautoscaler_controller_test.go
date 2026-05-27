@@ -883,6 +883,210 @@ var _ = Describe("AgenticAutoscalerReconciler reclassify annotation", func() {
 func ptrInt32(v int32) *int32 { return &v }
 
 // -----------------------------------------------------------------------
+// G16 — Revision-annotation watcher (Plan 16 T3, F19)
+// -----------------------------------------------------------------------
+
+var _ = Describe("AgenticAutoscalerReconciler G16 revision watcher", func() {
+	const ns = "rec-g16-revision"
+	ctx := context.Background()
+
+	BeforeEach(func() {
+		ensureNamespace(ctx, ns)
+	})
+
+	It("reads deployment.kubernetes.io/revision annotation, not metadata.generation", func() {
+		const dep = "rev-deploy"
+		const cr = "rev-cr"
+		// Create the Deployment with the revision annotation pre-set,
+		// since envtest doesn't run the Deployment controller that would
+		// normally bump it.
+		makeDeployment(ctx, ns, dep, 2)
+		// Set the revision annotation explicitly (envtest has no Deployment
+		// controller to set it for us).
+		d := fetchDeploy(ctx, ns, dep)
+		if d.Annotations == nil {
+			d.Annotations = map[string]string{}
+		}
+		d.Annotations["deployment.kubernetes.io/revision"] = "1"
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		DeferCleanup(cancelWorker)
+
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1000, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+
+		// Real Manager wired into the reconciler. We don't care if the
+		// worker actually classifies — we observe whether the reconciler
+		// passed the revision annotation (string "1") into the manager,
+		// not the deployment.Generation (int64 monotonic).
+		mgr := classifier.NewManager(
+			workerCtx,
+			k8sClient,
+			prom,
+			&record.FakeRecorder{Events: make(chan string, 32)},
+			classifier.WorkerConfig{
+				Interval:       time.Hour,
+				HistoryHours:   24 * time.Hour,
+				MinPoints:      70,
+				HighConfPoints: 240,
+				DedupSeconds:   60,
+			},
+		)
+		r.Classifier = mgr
+
+		// First reconcile — Ensure() registers a worker and the
+		// reconciler calls ObserveDeploymentRevision(key, "1").
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		key := types.NamespacedName{Namespace: ns, Name: cr}
+		Expect(mgr.LastDeploymentRevision(key)).To(Equal("1"),
+			"reconciler must read .Annotations[\"deployment.kubernetes.io/revision\"]")
+	})
+
+	It("does NOT update last-observed revision when /scale bumps generation but annotation is unchanged", func() {
+		const dep = "rev-stable-deploy"
+		const cr = "rev-stable-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		d := fetchDeploy(ctx, ns, dep)
+		if d.Annotations == nil {
+			d.Annotations = map[string]string{}
+		}
+		d.Annotations["deployment.kubernetes.io/revision"] = "5"
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		DeferCleanup(cancelWorker)
+
+		// Configure the forecaster to push the workload from 2 → 6 replicas
+		// so the reconciler issues a /scale patch (which bumps generation).
+		prom := &fakePromQuerier{instantVal: 600, rangeVal: rangeSamples(20, 600)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1500, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+
+		mgr := classifier.NewManager(
+			workerCtx,
+			k8sClient,
+			prom,
+			&record.FakeRecorder{Events: make(chan string, 32)},
+			classifier.WorkerConfig{
+				Interval:       time.Hour,
+				HistoryHours:   24 * time.Hour,
+				MinPoints:      70,
+				HighConfPoints: 240,
+				DedupSeconds:   60,
+			},
+		)
+		r.Classifier = mgr
+
+		key := types.NamespacedName{Namespace: ns, Name: cr}
+
+		// First reconcile — issues a /scale patch (generation bumps) but
+		// revision annotation stays "5".
+		genBefore := fetchDeploy(ctx, ns, dep).Generation
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+		genAfter := fetchDeploy(ctx, ns, dep).Generation
+
+		// Sanity-check the test premise: the reconciler must have actually
+		// bumped generation via /scale. If it didn't (e.g. cooldown blocked
+		// the scale), we can't assert the desired property.
+		if genBefore == genAfter {
+			Skip("envtest did not bump generation on /scale; test premise invalid")
+		}
+
+		// First-observation seed.
+		Expect(mgr.LastDeploymentRevision(key)).To(Equal("5"))
+
+		// Second reconcile — generation bumped again on the second /scale
+		// patch (or stays the same if no scale fires). Either way, the
+		// revision annotation is still "5", so LastDeploymentRevision
+		// must still be "5".
+		_, err = reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fetchDeploy(ctx, ns, dep).Annotations["deployment.kubernetes.io/revision"]).
+			To(Equal("5"), "/scale must not change the revision annotation")
+		Expect(mgr.LastDeploymentRevision(key)).To(Equal("5"),
+			"a /scale patch must NOT update the manager's revision tracker")
+	})
+
+	It("updates last-observed revision when the rollout annotation actually changes", func() {
+		const dep = "rev-rollout-deploy"
+		const cr = "rev-rollout-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		d := fetchDeploy(ctx, ns, dep)
+		if d.Annotations == nil {
+			d.Annotations = map[string]string{}
+		}
+		d.Annotations["deployment.kubernetes.io/revision"] = "1"
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		DeferCleanup(cancelWorker)
+
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 600, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+
+		mgr := classifier.NewManager(
+			workerCtx,
+			k8sClient,
+			prom,
+			&record.FakeRecorder{Events: make(chan string, 32)},
+			classifier.WorkerConfig{
+				Interval:       time.Hour,
+				HistoryHours:   24 * time.Hour,
+				MinPoints:      70,
+				HighConfPoints: 240,
+				DedupSeconds:   1,
+			},
+		)
+		r.Classifier = mgr
+
+		key := types.NamespacedName{Namespace: ns, Name: cr}
+
+		// First reconcile seeds revision="1".
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.LastDeploymentRevision(key)).To(Equal("1"))
+
+		// Simulate a rollout: bump the revision annotation to "2".
+		d = fetchDeploy(ctx, ns, dep)
+		d.Annotations["deployment.kubernetes.io/revision"] = "2"
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+
+		// Second reconcile reads the new revision and updates the tracker.
+		_, err = reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(mgr.LastDeploymentRevision(key)).To(Equal("2"),
+			"rollout (revision annotation change) must update the tracker")
+	})
+})
+
+// -----------------------------------------------------------------------
 // G13 — UnboundedRecommended + MaxReplicasBinding end-to-end (Plan 15 T14)
 // -----------------------------------------------------------------------
 

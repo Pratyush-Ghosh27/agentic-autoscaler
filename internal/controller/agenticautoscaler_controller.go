@@ -214,9 +214,15 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	rpsPerPod := decision.ClampRpsPerPod(state.RpsPerPod, rpsPerPodMin, rpsPerPodMax)
 
 	// Step 5 (cont.): pre-cap recommendation.
+	// Unbounded = pre-clamp forecaster ask; recommended = post-clamp;
+	// bindingReason is the tentative step-5 reasoning token (step 6/7
+	// may overwrite it in ApplyCapAndCooldown — see design §5 precedence
+	// rules 1-4). The bindingReason local is wired into CapInput in T6.
 	minReplicas := derefOr(aas.Spec.MinReplicas, 2)
 	maxReplicas := derefOr(aas.Spec.MaxReplicas, 10)
-	recommended := decision.ComputeRecommended(forecastResp.PredictedRPS, rpsPerPod, minReplicas, maxReplicas)
+	unbounded := decision.ComputeUnboundedRecommended(forecastResp.PredictedRPS, rpsPerPod)
+	recommended, bindingReason := decision.ClampRecommended(unbounded, minReplicas, maxReplicas)
+	_ = bindingReason // wired into CapInput.BindingReason in T6
 
 	// Step 6-8: cap + cooldown + hysteresis.
 	capOut := decision.ApplyCapAndCooldown(decision.CapInput{
@@ -288,6 +294,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	aas.Status.ConflictReason = ""
 	aas.Status.CurrentReplicas = capOut.Target
 	aas.Status.RecommendedReplicas = recommended
+	aas.Status.UnboundedRecommended = unbounded
 	aas.Status.PredictedRPS = int32(forecastResp.PredictedRPS)
 	aas.Status.RpsPerPodCurrent = int32(rpsPerPod)
 	if capOut.ShouldPatch {

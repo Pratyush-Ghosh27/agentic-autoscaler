@@ -163,28 +163,6 @@ func ClampRecommended(unbounded, minReplicas, maxReplicas int32) (int32, string)
 	return unbounded, ""
 }
 
-// ComputeRecommended calculates the raw recommendedReplicas (pre-cap,
-// pre-cooldown), per design §5 step 5: ceil(predicted / rps_per_pod) clamped
-// to [minReplicas, maxReplicas]. If rps_per_pod <= 0 we fail safe to
-// maxReplicas — the math is undefined and we'd rather over-provision than
-// under-provision in that edge case.
-//
-// Deprecated: split into ComputeUnboundedRecommended + ClampRecommended.
-// Retired in Plan 15 Task 3 once the reconciler is migrated.
-func ComputeRecommended(predictedRPS, rpsPerPod float64, minReplicas, maxReplicas int32) int32 {
-	if rpsPerPod <= 0 {
-		return maxReplicas
-	}
-	raw := int32(math.Ceil(predictedRPS / rpsPerPod))
-	if raw < minReplicas {
-		return minReplicas
-	}
-	if raw > maxReplicas {
-		return maxReplicas
-	}
-	return raw
-}
-
 // CapInput feeds ApplyCapAndCooldown.
 type CapInput struct {
 	Recommended   int32

@@ -112,40 +112,6 @@ func TestResolveEffectiveParams_EmptyStringSpecFallsThrough(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
-// ComputeRecommended — design §5 step 5
-// -----------------------------------------------------------------------
-
-func TestComputeRecommended_Basic(t *testing.T) {
-	cases := []struct {
-		name      string
-		predicted float64
-		rpsPerPod float64
-		min, max  int32
-		want      int32
-	}{
-		{"exact fit", 300, 100, 1, 10, 3},
-		{"fractional ceil", 301, 100, 1, 10, 4},
-		{"clamp to min", 50, 100, 2, 10, 2},
-		{"clamp to max", 2000, 100, 1, 5, 5},
-		{"zero predicted", 0, 100, 1, 10, 1},
-		{"very low rps_per_pod", 100, 1, 1, 100, 100},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := decision.ComputeRecommended(tc.predicted, tc.rpsPerPod, tc.min, tc.max)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
-func TestComputeRecommended_NonPositiveRpsPerPodFailsToMax(t *testing.T) {
-	// rps_per_pod <= 0 is mathematically undefined; we fail safe by
-	// scaling out to the maximum.
-	assert.Equal(t, int32(10), decision.ComputeRecommended(500, 0, 1, 10))
-	assert.Equal(t, int32(10), decision.ComputeRecommended(500, -3, 1, 10))
-}
-
-// -----------------------------------------------------------------------
 // ComputeUnboundedRecommended + ClampRecommended — design §5 step 5
 // (the G13 split: unbounded value first, clamp + binding reason second).
 // -----------------------------------------------------------------------

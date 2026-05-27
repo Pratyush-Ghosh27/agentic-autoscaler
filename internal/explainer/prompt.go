@@ -40,17 +40,27 @@ const MaxEventLength = 500
 // asking the LLM to interpret raw JSON: small models hallucinate less when
 // the schema is hand-rendered into prose.
 //
-// Conditional rendering rules from §6.2:
+// Conditional rendering rules from design_v2.md §6.2:
 //   - Omit the "Traffic pattern" line entirely when Pattern is "" or "default"
 //     (those mean "classifier hasn't run yet" or "no recognised pattern").
+//   - F12: Include the "Long-term context" line whenever Pattern != ""
+//     (NOT gated on Pattern != "default" — a workload classified as
+//     "default" still has measured baseline/p95 worth surfacing).
 //   - Only include the "limited by maxStep" line when the step cap actually
-//     activated, signalled by Reason ∈ {step_capped_up, step_capped_down}.
+//     activated (Reason ∈ {step_capped_up, step_capped_down}).
 func BuildPrompt(req controller.ExplainRequest) (system, user string) {
 	var b strings.Builder
 
 	if req.Pattern != "" && req.Pattern != "default" {
 		fmt.Fprintf(&b, "Traffic pattern: %s (confidence: %s)\n",
 			req.Pattern, req.Confidence)
+	}
+
+	// F12: Long-term context gates only on Pattern != "" (NOT != "default") —
+	// a workload classified as "default" still has measured baseline/p95.
+	if req.Pattern != "" {
+		fmt.Fprintf(&b, "Long-term context: baseline %d rps, p95 %d rps\n",
+			req.BaselineRPS, req.PeakP95RPS)
 	}
 
 	fmt.Fprintf(&b, "Current RPS: %.1f, Predicted RPS (%d min ahead): %.1f\n",
@@ -68,7 +78,8 @@ func BuildPrompt(req controller.ExplainRequest) (system, user string) {
 	fmt.Fprintf(&b,
 		"Active parameters: scaleUpCooldown=%ds, scaleDownCooldown=%ds, maxStep=%d\n",
 		req.EffectiveCooldownUp, req.EffectiveCooldownDown, req.EffectiveMaxStep)
-	fmt.Fprintf(&b, "\nExplain why this decision was made and what the traffic data suggests.")
+	fmt.Fprintf(&b, "\nExplain why this decision was made and what the traffic data suggests "+
+		"relative to the workload's long-term baseline.")
 
 	return SystemMessage, b.String()
 }

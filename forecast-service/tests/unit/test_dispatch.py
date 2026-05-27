@@ -213,3 +213,83 @@ def test_recommend_context_does_not_change_selection(
     assert without["model_used"] == with_ctx["model_used"]
     # predicted_rps may differ slightly across runs due to Prophet's
     # internal MCMC; assert only on the model_used contract here.
+
+
+# -----------------------------------------------------------------------
+# T12 (G12 / F22): gbdt_quantile is routable + auto-mode never picks it
+# -----------------------------------------------------------------------
+
+
+def _gbdt_ctx():  # type: ignore[no-untyped-def]
+    """Shared ContextPayload for the gbdt_quantile dispatch tests."""
+    from forecast.models import ContextPayload
+
+    return ContextPayload(
+        baseline_rps=50,
+        peak_p95_rps=200,
+        trend_24h_slope=0.0,
+        hourly_profile=[50] * 24,
+        hourly_profile_valid=True,
+        current_hour_utc=12,
+        current_minute_utc=0,
+    )
+
+
+@pytest.mark.slow
+def test_dispatch_routes_gbdt_quantile_when_preferred() -> None:
+    """T12 (G12): ``preferred_model='gbdt_quantile'`` MUST route through
+    the GBDT forecaster, not Prophet or linear_extrap. We use 50 flat
+    samples so the gbdt length gate (>=GBDT_MIN_POINTS+horizon=40)
+    passes."""
+    history = [50.0] * 50
+    result = recommend(
+        rps_history=history,
+        horizon_minutes=10,
+        prophet_min_points=30,
+        preferred_model="gbdt_quantile",
+        context=_gbdt_ctx(),
+    )
+    assert result["model_used"] == "gbdt_quantile"
+    assert result["predicted_rps"] >= 0.0
+
+
+def test_dispatch_auto_never_picks_gbdt_quantile_across_history_sizes(
+    short_series_5: list[float],
+) -> None:
+    """T12 (F22): the F22 invariant — ``preferred_model in
+    {None, 'auto', '', unknown}`` MUST NEVER select gbdt_quantile,
+    regardless of history length. Sweeping a range of sizes that
+    cross both auto-prophet and short-history-linear thresholds
+    proves the structural enforcement is not just a happy-path
+    coincidence."""
+    base = short_series_5  # length 5
+    for n_history in (5, 30, 60, 240):
+        history = (base * ((n_history // len(base)) + 1))[:n_history]
+        for pref in (None, "auto", "", "experimental_xgboost"):
+            result = recommend(
+                rps_history=history,
+                horizon_minutes=10,
+                prophet_min_points=30,
+                preferred_model=pref,
+                context=_gbdt_ctx(),
+            )
+            assert result["model_used"] != "gbdt_quantile", (
+                f"auto/None/'' selected gbdt_quantile at "
+                f"n={n_history} pref={pref!r} — F22 invariant violated"
+            )
+
+
+def test_dispatch_gbdt_quantile_falls_back_when_history_too_short() -> None:
+    """T12 (G12): when gbdt_quantile raises (short history is the
+    most likely real-world cause), dispatch falls back to
+    linear_extrap so the hot path never 5xx-es from a model issue —
+    mirrors the Prophet failure path."""
+    history = [50.0] * 5
+    result = recommend(
+        rps_history=history,
+        horizon_minutes=10,
+        prophet_min_points=30,
+        preferred_model="gbdt_quantile",
+        context=_gbdt_ctx(),
+    )
+    assert result["model_used"] == "linear_extrap"

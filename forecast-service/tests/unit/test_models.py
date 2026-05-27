@@ -140,3 +140,25 @@ def test_response_round_trips() -> None:
         "horizon_minutes": 10,
         "model_used": "prophet",
     }
+
+
+def test_request_accepts_gbdt_quantile_preferred_model() -> None:
+    """T2 (G12): the gbdt_quantile pin must be a valid preferred_model
+    value at the schema layer, so users can opt in via the CRD."""
+    req = RecommendRequest(
+        horizon_minutes=10,
+        rps_history=[1.0, 2.0, 3.0],
+        preferred_model="gbdt_quantile",
+    )
+    assert req.preferred_model == "gbdt_quantile"
+
+
+def test_response_round_trips_with_gbdt_quantile_model_used() -> None:
+    """T2 (G12): the response Literal must accept gbdt_quantile so the
+    dispatcher (T12) can advertise that the model was actually used."""
+    resp = RecommendResponse(
+        predicted_rps=1450.0,
+        horizon_minutes=10,
+        model_used="gbdt_quantile",
+    )
+    assert resp.model_used == "gbdt_quantile"

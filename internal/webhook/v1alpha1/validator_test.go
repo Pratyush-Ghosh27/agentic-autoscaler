@@ -185,7 +185,7 @@ func TestValidateSpec_RejectsNegativeScaleDownCooldown(t *testing.T) {
 }
 
 func TestValidateSpec_AcceptsKnownForecasters(t *testing.T) {
-	for _, model := range []string{"prophet", "linear_extrap", "auto"} {
+	for _, model := range []string{"prophet", "linear_extrap", "gbdt_quantile", "auto"} {
 		t.Run(model, func(t *testing.T) {
 			cr := validCR()
 			cr.Spec.PreferredForecaster = ptrStr(model)

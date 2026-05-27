@@ -81,11 +81,11 @@ func ValidateSpec(spec *autoscalingv1alpha1.AgenticAutoscalerSpec) error {
 	// preferredForecaster — design §4 (only when non-nil).
 	if spec.PreferredForecaster != nil {
 		switch *spec.PreferredForecaster {
-		case "prophet", "linear_extrap", "auto":
+		case "prophet", "linear_extrap", "gbdt_quantile", "auto":
 			// accepted
 		default:
 			problems = append(problems, fmt.Sprintf(
-				"preferredForecaster=%q must be one of prophet, linear_extrap, auto",
+				"preferredForecaster=%q must be one of prophet, linear_extrap, gbdt_quantile, auto",
 				*spec.PreferredForecaster))
 		}
 	}

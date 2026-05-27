@@ -41,7 +41,7 @@ func RunPipeline(
 	f := ExtractFeatures(series)
 	pattern := Classify(f)
 	conf := Confidence(len(series), highConfThreshold, minThreshold)
-	params := ComputeParams(f, minReplicas, maxReplicas)
+	params := ComputeParams(f, pattern, minReplicas, maxReplicas)
 
 	return PipelineResult{
 		Pattern:       pattern,
@@ -149,7 +149,7 @@ func RunPipelineV2(
 	}
 	pattern := ClassifyWithMean(f, m)
 	conf := Confidence(len(series), highConfThreshold, minThreshold)
-	params := ComputeParams(f, minReplicas, maxReplicas)
+	params := ComputeParams(f, pattern, minReplicas, maxReplicas)
 
 	profile, valid := ComputeHourlyProfile(series, resolution, cfg.StartHourUTC, cfg.HourlyProfileMinHours)
 	ctx := &ContextOutput{

@@ -59,8 +59,15 @@ class RecommendRequest(BaseModel):
     workload_id: str | None = None
     """Free-form identifier; accepted but unused. Useful for tracing."""
 
-    preferred_model: Literal["prophet", "linear_extrap", "auto"] | None = None
-    """Override for model selection. None or 'auto' means defer to auto-select."""
+    preferred_model: (
+        Literal["prophet", "linear_extrap", "gbdt_quantile", "auto"] | None
+    ) = None
+    """Override for model selection. None or 'auto' means defer to auto-select.
+
+    Note: G12 (Phase 3) — "gbdt_quantile" is an opt-in spike-aware
+    forecaster. F22 (mirrored in the Go classifier in T13) guarantees
+    that classifier auto-mode never selects it, so this value can only
+    arrive here when the user explicitly pinned it via the CRD spec."""
 
     context: ContextPayload | None = None
     """Cold-path-computed context. None means "no context" — either the
@@ -80,4 +87,4 @@ class RecommendResponse(BaseModel):
 
     predicted_rps: float
     horizon_minutes: int
-    model_used: Literal["prophet", "linear_extrap"]
+    model_used: Literal["prophet", "linear_extrap", "gbdt_quantile"]

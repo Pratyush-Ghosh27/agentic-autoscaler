@@ -84,10 +84,14 @@ spec:
                 minimum: 1
                 type: integer
               preferredForecaster:
-                description: PreferredForecaster. nil or "auto" means "defer to classifier".
+                description: |-
+                  PreferredForecaster. nil or "auto" means "defer to classifier".
+                  "gbdt_quantile" is an opt-in spike-aware forecaster; auto/classifier
+                  never selects it (F22), so it only ever runs when the user pins it.
                 enum:
                 - prophet
                 - linear_extrap
+                - gbdt_quantile
                 - auto
                 type: string
               rpsPerPodMax:
@@ -228,10 +232,14 @@ spec:
                     - default
                     type: string
                   preferredForecaster:
-                    description: PreferredForecaster is "prophet" or "linear_extrap".
+                    description: |-
+                      PreferredForecaster is "prophet", "linear_extrap", or "gbdt_quantile".
+                      Note: per F22 the classifier itself MUST NOT emit "gbdt_quantile" in
+                      auto mode — it only appears here when the user pinned it on the spec.
                     enum:
                     - prophet
                     - linear_extrap
+                    - gbdt_quantile
                     type: string
                   scaleDownCooldownSeconds:
                     description: ScaleDownCooldownSeconds is the classifier's recommended

@@ -30,6 +30,11 @@ func TestRunPipeline_OnSpikyFixture(t *testing.T) {
 	assert.Equal(t, classifier.PatternSpiky, result.Pattern)
 	assert.Equal(t, classifier.ConfidenceHigh, result.Confidence)
 	assert.Greater(t, result.Params.MaxStep, int32(1))
+	// T15 (G19): spiky pattern must route to gbdt_quantile end-to-end
+	// through RunPipeline + ComputeParams. Pins the symmetric Go-side
+	// counterpart of the Python F22 invariant.
+	assert.Equal(t, classifier.ForecasterGBDTQuantile, result.Params.PreferredForecaster,
+		"spiky pattern must select gbdt_quantile via the pattern-driven selector (G19)")
 }
 
 func TestRunPipeline_InsufficientPoints(t *testing.T) {
@@ -67,6 +72,46 @@ func TestRunPipeline_FlatBoundaryFixture(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, classifier.PatternFlat, result.Pattern)
 	assert.Equal(t, classifier.ConfidenceMedium, result.Confidence)
+}
+
+// TestRunPipelineV2_SpikyPatternSelectsGBDTQuantile pins the G19
+// invariant end-to-end on the v2 cold-path pipeline: a series the
+// classifier identifies as `spiky` MUST produce PreferredForecaster
+// = gbdt_quantile on the persisted ClassifiedOutput. This is the
+// integration counterpart of TestComputeParams_PatternDrivenForecaster
+// — it exercises the full path classify -> pattern -> ComputeParams
+// rather than just unit-testing the selector in isolation.
+func TestRunPipelineV2_SpikyPatternSelectsGBDTQuantile(t *testing.T) {
+	// Synthetic spiky series at 5-min cadence over 24h: a low
+	// baseline of 20 rps with periodic 200-rps bursts every 30
+	// buckets (= 2.5h). Peak-to-trough of 10x and CV > 1.0 reliably
+	// fire the spiky thresholds.
+	series := make([]float64, 288)
+	for i := range series {
+		if i%30 == 0 {
+			series[i] = 200.0
+		} else {
+			series[i] = 20.0
+		}
+	}
+
+	cfg := classifier.PipelineConfig{
+		ResolutionMin:         5,
+		HourlyProfileMinHours: 12,
+		CVGuardMeanRPS:        1.0,
+		StartHourUTC:          0,
+	}
+	result, err := classifier.RunPipelineV2(series, 240, 72, 1, 10, cfg)
+	require.NoError(t, err)
+	require.Equal(t, classifier.PatternSpiky, result.Pattern,
+		"synthetic burst series must classify as spiky (got %q) — "+
+			"if this fails, the series needs re-tuning, not the selector",
+		result.Pattern)
+	assert.Equal(t,
+		classifier.ForecasterGBDTQuantile,
+		result.Params.PreferredForecaster,
+		"spiky pattern must route to gbdt_quantile via the v2 pipeline (G19)",
+	)
 }
 
 // -----------------------------------------------------------------------

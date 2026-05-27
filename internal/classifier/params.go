@@ -24,18 +24,16 @@ const (
 	KPeriodicDown                = 0.5
 	ScaleDownCooldownHardFloor   = int32(60)
 	ScaleDownCooldownHardCeiling = int32(600)
-
-	// PreferredForecaster thresholds: prefer prophet when there's enough
-	// signal for it to beat linear extrapolation. Sustained periodicity
-	// or a strong trend qualifies; pure noise does not.
-	prophetTodCorrelationAbove = 0.70
-	prophetTrendSlopeAbove     = 2.0
 )
 
 // Forecaster names. Match the CRD enum values exactly.
 const (
 	ForecasterLinearExtrap = "linear_extrap"
 	ForecasterProphet      = "prophet"
+	// ForecasterGBDTQuantile is the LightGBM quantile-regression
+	// forecaster for spiky workloads. Phase 3 / G12; see
+	// docs/design_v2.md §5 forecast_gbdt_quantile.
+	ForecasterGBDTQuantile = "gbdt_quantile"
 )
 
 // ClassifiedOutput is the set of params the classifier writes to
@@ -49,8 +47,8 @@ type ClassifiedOutput struct {
 	PreferredForecaster string
 }
 
-// ComputeParams applies the design §7 formulae to produce recommended
-// scaling params from the extracted features.
+// ComputeParams applies the design_v2 §7 formulae to produce recommended
+// scaling params from the extracted features and the classifier pattern.
 //
 // Formulae:
 //
@@ -58,12 +56,27 @@ type ClassifiedOutput struct {
 //	scaleDownCooldown = clamp(round(BASE_DOWN * (1 + K_CV_DOWN*cv)
 //	                          / (1 + K_PERIODIC_DOWN*max(0, tod))), floor, ceiling)
 //	maxStep           = clamp(ceil(log2(peak_to_trough)), 1, max-min)
-//	preferredForecaster = "prophet" when tod>0.70 OR |trend|>2.0
-//	                      "linear_extrap" otherwise
+//	preferredForecaster = pattern -> forecaster table (G19, see below).
+//
+// pattern -> forecaster table (G19, Phase 3):
+//
+//	flat / gradual_ramp / default  -> linear_extrap
+//	periodic                       -> prophet
+//	spiky                          -> gbdt_quantile
+//	(anything else)                -> linear_extrap (safe fallback)
 //
 // minReplicas/maxReplicas come from the CRD spec (or its defaults) — they
 // bound maxStep so that a single reconcile cannot cross the entire range.
-func ComputeParams(f Features, minReplicas, maxReplicas int32) ClassifiedOutput {
+//
+// Breaking change in Phase 3: the legacy v1 feature-driven selector
+// (`prophet when tod>0.70 OR |trend|>2.0`) is gone. Pattern is the
+// single source of truth so the controller, the worker, and the
+// Forecast Service all see the same routing decision.
+func ComputeParams(
+	f Features,
+	pattern string,
+	minReplicas, maxReplicas int32,
+) ClassifiedOutput {
 	rawUp := BaseScaleUpCooldown / (1 + KCVUp*f.CV)
 	scaleUp := clampInt32(int32(math.Round(rawUp)),
 		ScaleUpCooldownHardFloor, ScaleUpCooldownHardCeiling)
@@ -85,17 +98,29 @@ func ComputeParams(f Features, minReplicas, maxReplicas int32) ClassifiedOutput 
 	}
 	maxStep = clampInt32(maxStep, 1, replicaRange)
 
-	forecaster := ForecasterLinearExtrap
-	if f.TodCorrelation > prophetTodCorrelationAbove ||
-		math.Abs(f.TrendSlope) > prophetTrendSlopeAbove {
-		forecaster = ForecasterProphet
-	}
-
 	return ClassifiedOutput{
 		ScaleUpCooldown:     scaleUp,
 		ScaleDownCooldown:   scaleDown,
 		MaxStep:             maxStep,
-		PreferredForecaster: forecaster,
+		PreferredForecaster: forecasterForPattern(pattern),
+	}
+}
+
+// forecasterForPattern is the G19 pattern → forecaster table. Unknown
+// inputs (including the empty string) fall back to linear_extrap so
+// the safe path is the structural default — gbdt_quantile is only
+// reachable via the explicit "spiky" arm, mirroring F22 on the Python
+// dispatcher side.
+func forecasterForPattern(pattern string) string {
+	switch pattern {
+	case PatternPeriodic:
+		return ForecasterProphet
+	case PatternSpiky:
+		return ForecasterGBDTQuantile
+	case PatternFlat, PatternGradualRamp, PatternDefault:
+		return ForecasterLinearExtrap
+	default:
+		return ForecasterLinearExtrap
 	}
 }
 

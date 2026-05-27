@@ -121,6 +121,67 @@ def test_recommend_endpoint_rejects_malformed_context(
     assert resp.status_code == 422
 
 
+@pytest.mark.slow
+def test_recommend_endpoint_routes_gbdt_quantile_when_preferred(
+    client: TestClient,
+) -> None:
+    """T14 (G12) end-to-end: POST /recommend with preferred_model
+    "gbdt_quantile" and sufficient history (>=GBDT_MIN_POINTS +
+    horizon = 40 by default) returns model_used="gbdt_quantile" with
+    a finite, non-negative predicted_rps. This pins the full stack:
+    schema accepts the value (T2), dispatcher routes it (T12),
+    gbdt_model fits + predicts (T10), and the cap fires (T11)."""
+    body = {
+        "rps_history": [50.0] * 50,
+        "preferred_model": "gbdt_quantile",
+        "context": {
+            "baseline_rps": 50,
+            "peak_p95_rps": 200,
+            "trend_24h_slope": 0.0,
+            "hourly_profile": [50] * 24,
+            "hourly_profile_valid": True,
+            "current_hour_utc": 12,
+            "current_minute_utc": 0,
+        },
+    }
+    resp = client.post("/recommend", json=body)
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["model_used"] == "gbdt_quantile"
+    assert payload["predicted_rps"] >= 0.0
+
+
+def test_recommend_endpoint_auto_never_returns_gbdt_quantile(
+    client: TestClient,
+) -> None:
+    """T14 (F22) end-to-end: even with a generous history and a
+    context that would make gbdt_quantile plausible, preferred_model
+    "auto" must NEVER return model_used="gbdt_quantile". This is the
+    F22 invariant pinned at the wire level — the only way to reach
+    gbdt_quantile is via an explicit pin."""
+    body = {
+        "rps_history": [50.0] * 100,
+        "preferred_model": "auto",
+        "context": {
+            "baseline_rps": 50,
+            "peak_p95_rps": 200,
+            "trend_24h_slope": 0.0,
+            "hourly_profile": [50] * 24,
+            "hourly_profile_valid": True,
+            "current_hour_utc": 12,
+            "current_minute_utc": 0,
+        },
+    }
+    resp = client.post("/recommend", json=body)
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["model_used"] != "gbdt_quantile", (
+        f"F22 violated: auto mode returned gbdt_quantile "
+        f"(payload={payload})"
+    )
+    assert payload["model_used"] in ("prophet", "linear_extrap")
+
+
 def test_v2_env_vars_have_defaults() -> None:
     """G21, F24: every v2 env var has a sensible default so existing
     operators upgrade without setting anything new. Pinning these as

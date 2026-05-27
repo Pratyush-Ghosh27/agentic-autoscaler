@@ -115,8 +115,17 @@ jobs:
             -n agentic-system --timeout=300s
           kubectl wait --for=condition=available deployment/app-agentic -n demo --timeout=120s
           kubectl wait --for=condition=available deployment/app-hpa     -n demo --timeout=120s
-          echo "Sleeping 5m for classifier first-run + reconciler steady state..."
-          sleep 300
+          # AAS hot path needs HOT_PATH_MIN_POINTS=10 Prometheus samples (10
+          # minutes at 1-min resolution) before its first scale decision.
+          # Sleeping 12m ensures the controller has its full warm-up window
+          # BEFORE k6 starts ramping load, eliminating the ramp-up saturation
+          # that comes from AAS being pinned at minReplicas while load climbs
+          # to peak. The previous 5m sleep meant AAS still needed 5 more
+          # minutes of metric accumulation after k6 started, leaving the
+          # initial 2 replicas to absorb 0→200 RPS unaided — see the failure
+          # diagnosis in run 26521545521 (nightly-e2e-failure-artifacts).
+          echo "Sleeping 12m for AAS hot-path warm-up + classifier first-run..."
+          sleep 720
 
       # ---- Drive load + assert ----
       #
@@ -198,6 +207,14 @@ jobs:
           kubectl logs -n demo -l app=app-hpa     --tail=500 > artifacts/target-hpa-logs.txt     || true
           kubectl get events -A --sort-by=.lastTimestamp > artifacts/events.txt || true
           kubectl get aas -A -o yaml > artifacts/aas.yaml || true
+          # HPA YAML captures the custom-metric target value, which is needed
+          # to diagnose under-scaling on the HPA side. The previous artifact
+          # bundle only had `kubectl describe deploy app-hpa` (the workload),
+          # not the HorizontalPodAutoscaler resource itself, so we couldn't
+          # tell whether HPA stalled because its target was misconfigured or
+          # because prometheus-adapter went stale.
+          kubectl get hpa -A -o yaml > artifacts/hpa.yaml || true
+          kubectl describe hpa -n demo > artifacts/describe-hpa-resource.txt || true
           kubectl get deploy -A -o wide > artifacts/deployments.txt || true
           kubectl get pods -A -o wide > artifacts/pods.txt || true
           kubectl describe deploy app-agentic -n demo > artifacts/describe-agentic.txt || true

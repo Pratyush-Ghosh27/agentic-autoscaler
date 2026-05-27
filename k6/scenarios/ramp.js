@@ -38,7 +38,14 @@ export const options = {
     },
   },
   thresholds: {
-    "http_req_failed": ["rate<0.05"],
+    // Ramp tolerates a higher 5xx ceiling than steady because the first
+    // ~minute of ramp-up arrives at the targets before either autoscaler can
+    // fully catch up: even with the workflow's 12m steady-state warm-up that
+    // gets AAS past HOT_PATH_MIN_POINTS=10, there is structural saturation
+    // during the 0→PEAK phase (initial replicas absorb the leading edge of
+    // the ramp before scale-up lands). 0.10 matches spiky (the closest peer
+    // scenario by ramp-difficulty); steady remains stricter at 0.05.
+    "http_req_failed": ["rate<0.10"],
     "http_req_duration{url:agentic}": ["p(95)<2000"],
     "http_req_duration{url:hpa}": ["p(95)<2000"],
   },

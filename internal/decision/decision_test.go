@@ -271,6 +271,111 @@ func TestApplyCapAndCooldown(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
+// ApplyCapAndCooldown — G13/F27 precedence chain for BindingReason.
+// Matches design_v2.md §5 precedence rules 1-4: tentative binding reason
+// from step 5 is overwritten by step_capped_* (step 6) or
+// cooldown_holding_* (step 7), and preserved through hysteresis (step 8)
+// when no override fires.
+// -----------------------------------------------------------------------
+
+func TestApplyCapAndCooldown_BindingReasonCarriesWhenNoOverride(t *testing.T) {
+	// Workload already at maxReplicas; forecast keeps asking for more.
+	// Hysteresis fires (target == current), no step cap, no cooldown.
+	// Expected reason: max_replicas_binding (binding info is the most
+	// informative signal the operator can act on).
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   10, // clamped value
+		Current:       10,
+		MaxStep:       3,
+		CooldownUp:    60,
+		CooldownDown:  300,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MaxReplicasBinding,
+	})
+	assert.Equal(t, reasoning.MaxReplicasBinding, out.Reason)
+	assert.False(t, out.ShouldPatch, "target == current ⇒ no /scale patch")
+}
+
+func TestApplyCapAndCooldown_BindingReasonOverwrittenByStepCap(t *testing.T) {
+	// Clamped recommendation is 10; current is 5; maxStep is 2 ⇒ step cap fires.
+	// BindingReason was set tentatively in step 5; step 6 overwrites it.
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   10,
+		Current:       5,
+		MaxStep:       2,
+		CooldownUp:    0,
+		CooldownDown:  0,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MaxReplicasBinding,
+	})
+	assert.Equal(t, reasoning.StepCappedUp, out.Reason,
+		"step 6 must overwrite binding reason when cap clips the move")
+	assert.Equal(t, int32(7), out.Target)
+	assert.True(t, out.ShouldPatch)
+}
+
+func TestApplyCapAndCooldown_BindingReasonOverwrittenByCooldown(t *testing.T) {
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   10,
+		Current:       5,
+		MaxStep:       10,
+		CooldownUp:    300,
+		CooldownDown:  0,
+		LastScaleUp:   now.Add(-10 * time.Second), // still in cooldown
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MaxReplicasBinding,
+	})
+	assert.Equal(t, reasoning.CooldownHoldingUp, out.Reason,
+		"step 7 cooldown must overwrite binding reason")
+	assert.Equal(t, int32(5), out.Target)
+	assert.False(t, out.ShouldPatch)
+}
+
+func TestApplyCapAndCooldown_MinBindingOnHysteresis(t *testing.T) {
+	// Workload already at minReplicas; forecast keeps asking for fewer.
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   2,
+		Current:       2,
+		MaxStep:       3,
+		CooldownUp:    60,
+		CooldownDown:  300,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MinReplicasBinding,
+	})
+	assert.Equal(t, reasoning.MinReplicasBinding, out.Reason)
+	assert.False(t, out.ShouldPatch)
+}
+
+func TestApplyCapAndCooldown_EmptyBindingReasonGoesToNoChange(t *testing.T) {
+	// Regression-pin the existing no_change semantics for the non-binding case.
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   5,
+		Current:       5,
+		MaxStep:       3,
+		CooldownUp:    0,
+		CooldownDown:  0,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: "",
+	})
+	assert.Equal(t, reasoning.NoChange, out.Reason)
+	assert.False(t, out.ShouldPatch)
+}
+
+// -----------------------------------------------------------------------
 // ShouldUpdateRpsPerPod — design §5 step 5 steady-state gate
 // -----------------------------------------------------------------------
 

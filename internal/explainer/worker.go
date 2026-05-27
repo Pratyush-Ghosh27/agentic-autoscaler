@@ -141,6 +141,11 @@ func (w *Worker) logOllamaErr(logger logr.Logger, err error, req controller.Expl
 // emitEvent records a ScaleExplained Event on the CR. We Get the CR
 // first so the EventRecorder has a real involvedObject; if the CR was
 // deleted between Notify and now we silently skip.
+//
+// G22/F39: K8s Event Reason is PascalCase (kubectl convention); the
+// snake_case token is prepended to the message body so log searches
+// keyed on the canonical token still match. The body is re-trimmed
+// so that prefix + content does not exceed MaxEventLength.
 func (w *Worker) emitEvent(ctx context.Context, req controller.ExplainRequest, message string) {
 	if w.EventRecorder == nil || w.Client == nil {
 		return
@@ -150,5 +155,8 @@ func (w *Worker) emitEvent(ctx context.Context, req controller.ExplainRequest, m
 	if err := w.Client.Get(ctx, key, &aas); err != nil {
 		return
 	}
-	w.EventRecorder.Event(&aas, corev1.EventTypeNormal, reasoning.ScaleExplained, message)
+	prefix := reasoning.ScaleExplained + " "
+	body := TrimContent(prefix+message, MaxEventLength)
+	w.EventRecorder.Event(&aas, corev1.EventTypeNormal,
+		reasoning.PascalReason(reasoning.ScaleExplained), body)
 }

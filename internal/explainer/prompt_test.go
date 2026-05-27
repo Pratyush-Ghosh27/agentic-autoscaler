@@ -249,6 +249,64 @@ func TestBuildPrompt_OmitsMinBindingLineWhenMaxBinding(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
+// Kitchen-sink — full Plan 15 prompt for MaxReplicasBinding.
+// -----------------------------------------------------------------------
+
+// TestBuildPrompt_MaxReplicasBindingFullPrompt asserts every expected line
+// of the prompt when a max_replicas_binding event fires with full context.
+// This is the integration-level pin for the G18 / F12 / F33 surface — if
+// any conditional regresses, this test points directly at the missing line.
+func TestBuildPrompt_MaxReplicasBindingFullPrompt(t *testing.T) {
+	req := controller.ExplainRequest{
+		Namespace:             "demo",
+		Name:                  "app-agentic",
+		Reason:                reasoning.MaxReplicasBinding,
+		CurrentReplicas:       3,
+		RecommendedReplicas:   3,
+		UnboundedRecommended:  25,
+		TargetReplicas:        3,
+		MaxReplicas:           3,
+		MinReplicas:           1,
+		CurrentRPS:            800.5,
+		PredictedRPS:          2400.0,
+		HorizonMinutes:        10,
+		ModelUsed:             "prophet",
+		Pattern:               "periodic",
+		Confidence:            "high",
+		BaselineRPS:           400,
+		PeakP95RPS:            1500,
+		HourlyProfileValid:    true,
+		EffectiveCooldownUp:   60,
+		EffectiveCooldownDown: 300,
+		EffectiveMaxStep:      3,
+	}
+
+	_, user := explainer.BuildPrompt(req)
+
+	// All eight expected lines appear (order is preserved by the builder,
+	// but the assertions are substring-based so a future reorder doesn't
+	// break the test gratuitously).
+	expected := []string{
+		"Traffic pattern: periodic (confidence: high)",
+		"Long-term context: baseline 400 rps, p95 1500 rps",
+		"Current RPS: 800.5, Predicted RPS (10 min ahead): 2400.0",
+		"Scaling: 3 → 3 replicas (max_replicas_binding)",
+		"This scale was limited by maxReplicas: the forecast asked for 25 replicas but the CRD bound capped it at maxReplicas=3. Raise spec.maxReplicas to let the autoscaler scale further.",
+		"Forecasting model: prophet",
+		"Active parameters: scaleUpCooldown=60s, scaleDownCooldown=300s, maxStep=3",
+		"Explain why this decision was made and what the traffic data suggests relative to the workload's long-term baseline.",
+	}
+
+	for _, line := range expected {
+		assert.Contains(t, user, line, "missing prompt line: %q", line)
+	}
+	assert.NotContains(t, user, "limited by maxStep",
+		"max_replicas_binding is mutually exclusive with step_capped_*")
+	assert.NotContains(t, user, "limited by minReplicas",
+		"max_replicas_binding is mutually exclusive with min_replicas_binding")
+}
+
+// -----------------------------------------------------------------------
 // TrimContent.
 // -----------------------------------------------------------------------
 

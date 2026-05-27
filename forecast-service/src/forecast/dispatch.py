@@ -12,7 +12,10 @@ import logging
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 from forecast.linear_extrap import forecast_linear_extrap
-from forecast.metrics import forecast_prophet_failures_total
+from forecast.metrics import (
+    forecast_dispatch_total,
+    forecast_prophet_failures_total,
+)
 from forecast.prophet_model import forecast_prophet
 
 if TYPE_CHECKING:
@@ -69,6 +72,9 @@ def recommend(
             context.hourly_profile_valid,
         )
 
+    predicted: float
+    model_used: ModelName
+
     if preferred_model == "gbdt_quantile":
         # Local import: gbdt_model pulls in LightGBM, which is a non-trivial
         # cold start. Skipping the import unless a gbdt request actually
@@ -79,11 +85,7 @@ def recommend(
             predicted = forecast_gbdt_quantile(
                 rps_history, horizon_minutes, context=context
             )
-            return {
-                "predicted_rps": predicted,
-                "horizon_minutes": horizon_minutes,
-                "model_used": "gbdt_quantile",
-            }
+            model_used = "gbdt_quantile"
         except Exception as exc:  # noqa: BLE001 - fall back on any failure
             logging.warning(
                 "gbdt_quantile failed, falling back to linear_extrap: %s", exc
@@ -91,37 +93,40 @@ def recommend(
             predicted = forecast_linear_extrap(
                 rps_history, horizon_minutes, context=context
             )
-            return {
-                "predicted_rps": predicted,
-                "horizon_minutes": horizon_minutes,
-                "model_used": "linear_extrap",
-            }
-
-    use_prophet = _should_use_prophet(
-        rps_history=rps_history,
-        prophet_min_points=prophet_min_points,
-        preferred_model=preferred_model,
-    )
-
-    model_used: ModelName
-    if use_prophet:
-        try:
-            predicted = forecast_prophet(
-                rps_history, horizon_minutes, context=context
-            )
-            model_used = "prophet"
-        except Exception as exc:  # noqa: BLE001 - any Prophet failure is a fallback trigger
-            logging.warning("prophet failed, falling back to linear_extrap: %s", exc)
-            forecast_prophet_failures_total.inc()
+            model_used = "linear_extrap"
+    else:
+        use_prophet = _should_use_prophet(
+            rps_history=rps_history,
+            prophet_min_points=prophet_min_points,
+            preferred_model=preferred_model,
+        )
+        if use_prophet:
+            try:
+                predicted = forecast_prophet(
+                    rps_history, horizon_minutes, context=context
+                )
+                model_used = "prophet"
+            except Exception as exc:  # noqa: BLE001 - any Prophet failure is a fallback trigger
+                logging.warning(
+                    "prophet failed, falling back to linear_extrap: %s", exc
+                )
+                forecast_prophet_failures_total.inc()
+                predicted = forecast_linear_extrap(
+                    rps_history, horizon_minutes, context=context
+                )
+                model_used = "linear_extrap"
+        else:
             predicted = forecast_linear_extrap(
                 rps_history, horizon_minutes, context=context
             )
             model_used = "linear_extrap"
-    else:
-        predicted = forecast_linear_extrap(
-            rps_history, horizon_minutes, context=context
-        )
-        model_used = "linear_extrap"
+
+    # Single increment site for all forecasters: the label reflects the
+    # *resolved* model (post-fallback), so a prophet→linear_extrap fallback
+    # increments under linear_extrap, not prophet. The nightly E2E
+    # (test/e2e/assertions-gbdt.sh) relies on this contract to verify
+    # the gbdt_quantile path was actually exercised.
+    forecast_dispatch_total.labels(model_used=model_used).inc()
 
     return {
         "predicted_rps": predicted,

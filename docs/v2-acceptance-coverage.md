@@ -21,7 +21,7 @@ This matrix is the input for the Phase 6 banner flip (E11). It is not regenerate
 | 6 | `skip-context` annotation forces omit unconditionally | `internal/controller/agenticautoscaler_controller_test.go` envtest covering `AnnotationSkipContext` | Phase 2 (G10) |
 | 7 | Forecast Service `/recommend` accepts and validates `context` | `forecast-service/tests/integration/test_app.py::test_recommend_endpoint_accepts_context_block` | Phase 2 (G10) |
 | 8 | `spiky` + `auto` mode returns `model_used != "gbdt_quantile"` | `forecast-service/tests/unit/test_dispatch.py` (F22 invariant test) | Phase 3 (G12/G19) |
-| 9 | `spiky` + `preferredForecaster: gbdt_quantile` returns `gbdt_quantile` | `forecast-service/tests/integration/test_app.py::test_recommend_endpoint_routes_gbdt_quantile_when_preferred` | Phase 3 (G12) |
+| 9 | `spiky` + `preferredForecaster: gbdt_quantile` returns `gbdt_quantile` | Unit: `forecast-service/tests/integration/test_app.py::test_recommend_endpoint_routes_gbdt_quantile_when_preferred`. **Nightly E2E lock-in (Plan 18):** `.github/workflows/nightly-e2e.yml` patches `aas/app-agentic` with `preferredForecaster: gbdt_quantile`, runs the spiky k6 scenario, then asserts `forecast_dispatch_total{model_used="gbdt_quantile"} > 0` via `test/e2e/assertions-gbdt.sh`. | Phase 3 (G12) + Plan 18 |
 | 10 | Prophet `ds[-1]` anchored to context UTC hour+minute | `forecast-service/tests/unit/test_prophet_model.py` (anchoring test) | Phase 3 (G14/F3a/F17) |
 | 11 | Prophet adds `hour_baseline` regressor when profile valid | `forecast-service/tests/unit/test_prophet_model.py` (regressor test) | Phase 3 (G14) |
 | 12 | `linear_extrap` blends slope and recomputes intercept | `forecast-service/tests/unit/test_linear_extrap.py` (G15 blend + intercept tests) | Phase 3 (G15/F16/F31) |
@@ -59,3 +59,15 @@ A green pre-flight is the formal evidence that all 26 criteria are satisfied tod
 - Operational-defaults recalibration (pending real workload data — see strategy §8).
 - Cross-version CRD migration (no v1beta1 planned).
 - Acceptance criteria not yet in §11 (any future criteria are tracked in their own audit pass).
+
+---
+
+## Nightly E2E lock-ins (post-Phase-6)
+
+The unit/envtest pins above are the formal evidence that v2 is correct today. The nightly E2E adds independent **runtime** evidence that selected paths still serve real traffic on a kind cluster — the strongest signal we can collect without a production rollout.
+
+| Criterion (matrix #) | Nightly mechanism | Asserts on |
+| --- | --- | --- |
+| 9 (`gbdt_quantile` route end-to-end) | `kubectl patch aas/app-agentic` to `preferredForecaster: gbdt_quantile`, then `deploy/k6/run-incluster.sh spiky` | `forecast_dispatch_total{model_used="gbdt_quantile"} > 0` (`test/e2e/assertions-gbdt.sh`). Plan 18. |
+
+A nightly failure on row 9 means one of: the controller is no longer forwarding `preferredForecaster` to the Forecast Service; `gbdt_quantile` is silently raising on every call (forced fallback to `linear_extrap`); the forecast service isn't being scraped by Prometheus. The assertion's diagnostic output (counts for `linear_extrap` / `prophet`) tells you which.

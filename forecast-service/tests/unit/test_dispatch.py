@@ -7,7 +7,10 @@ from unittest.mock import patch
 import pytest
 
 from forecast.dispatch import recommend
-from forecast.metrics import forecast_prophet_failures_total
+from forecast.metrics import (
+    forecast_dispatch_total,
+    forecast_prophet_failures_total,
+)
 
 
 def test_short_history_uses_linear_extrap(short_series_5: list[float]) -> None:
@@ -277,6 +280,107 @@ def test_dispatch_auto_never_picks_gbdt_quantile_across_history_sizes(
                 f"auto/None/'' selected gbdt_quantile at "
                 f"n={n_history} pref={pref!r} — F22 invariant violated"
             )
+
+
+# -----------------------------------------------------------------------
+# Plan 18: forecast_dispatch_total counter is incremented on every
+# successful recommend() call, labelled by the resolved model_used.
+# The nightly E2E asserts on this counter to lock in the gbdt_quantile
+# path (see test/e2e/assertions-gbdt.sh).
+# -----------------------------------------------------------------------
+
+
+def test_recommend_increments_forecast_dispatch_total_per_call(
+    linear_series_30: list[float],
+) -> None:
+    """Every successful dispatch increments the counter labelled by the
+    resolved model_used. The auto branch with a 30-point history at
+    prophet_min_points=30 picks prophet, so prophet's child increments by
+    exactly one; other labels are untouched."""
+    before_prophet = forecast_dispatch_total.labels(model_used="prophet")._value.get()
+    before_linear = forecast_dispatch_total.labels(model_used="linear_extrap")._value.get()
+
+    result = recommend(
+        rps_history=linear_series_30,
+        horizon_minutes=10,
+        prophet_min_points=30,
+    )
+    assert result["model_used"] == "prophet"
+
+    after_prophet = forecast_dispatch_total.labels(model_used="prophet")._value.get()
+    after_linear = forecast_dispatch_total.labels(model_used="linear_extrap")._value.get()
+    assert after_prophet == before_prophet + 1, (
+        f"prophet child must increment by exactly 1; before={before_prophet} after={after_prophet}"
+    )
+    assert after_linear == before_linear, (
+        "linear_extrap child MUST be untouched when prophet was the resolved model"
+    )
+
+
+def test_recommend_increments_linear_extrap_child_on_prophet_failure_fallback(
+    linear_series_30: list[float],
+) -> None:
+    """When prophet raises and dispatch falls back to linear_extrap, the
+    counter increments under model_used='linear_extrap' (the *resolved*
+    model after fallback), not under 'prophet'. This is the contract the
+    nightly assertion relies on: the labelled count reflects what
+    actually served the request."""
+    before_prophet = forecast_dispatch_total.labels(model_used="prophet")._value.get()
+    before_linear = forecast_dispatch_total.labels(model_used="linear_extrap")._value.get()
+
+    with patch(
+        "forecast.dispatch.forecast_prophet",
+        side_effect=RuntimeError("simulated prophet fit failure"),
+    ):
+        result = recommend(
+            rps_history=linear_series_30,
+            horizon_minutes=10,
+            prophet_min_points=20,
+        )
+    assert result["model_used"] == "linear_extrap"
+
+    after_prophet = forecast_dispatch_total.labels(model_used="prophet")._value.get()
+    after_linear = forecast_dispatch_total.labels(model_used="linear_extrap")._value.get()
+    assert after_prophet == before_prophet, "prophet MUST NOT increment on fallback"
+    assert after_linear == before_linear + 1, (
+        f"linear_extrap MUST increment exactly once on prophet→linear fallback; "
+        f"before={before_linear} after={after_linear}"
+    )
+
+
+def test_recommend_increments_gbdt_quantile_child_on_explicit_route() -> None:
+    """T12/Plan 18 lock-in: when preferred_model='gbdt_quantile' wins and
+    the GBDT forecaster succeeds, the counter increments under
+    'gbdt_quantile'. The nightly E2E uses this exact label to confirm
+    the GBDT path was actually exercised."""
+    before = forecast_dispatch_total.labels(model_used="gbdt_quantile")._value.get()
+
+    history = [50.0] * 50
+    from forecast.models import ContextPayload
+
+    ctx = ContextPayload(
+        baseline_rps=50,
+        peak_p95_rps=200,
+        trend_24h_slope=0.0,
+        hourly_profile=[50] * 24,
+        hourly_profile_valid=True,
+        current_hour_utc=12,
+        current_minute_utc=0,
+    )
+    result = recommend(
+        rps_history=history,
+        horizon_minutes=10,
+        prophet_min_points=30,
+        preferred_model="gbdt_quantile",
+        context=ctx,
+    )
+    assert result["model_used"] == "gbdt_quantile"
+
+    after = forecast_dispatch_total.labels(model_used="gbdt_quantile")._value.get()
+    assert after == before + 1, (
+        f"gbdt_quantile child must increment by exactly 1 on explicit route; "
+        f"before={before} after={after}"
+    )
 
 
 def test_dispatch_gbdt_quantile_falls_back_when_history_too_short() -> None:

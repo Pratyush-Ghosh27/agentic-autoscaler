@@ -1,5 +1,9 @@
 // Package config loads the controller's runtime parameters from
-// environment variables. Defaults match docs/design.md §4 exactly.
+// environment variables. Defaults match docs/design_v2.md §4 exactly
+// (which differs from v1 in: CLASSIFIER_MIN_POINTS=72 (was 70),
+// PROPHET_MIN_POINTS=30 (was 60), and several new v2 knobs —
+// CONTEXT_DOWNSAMPLE_RESOLUTION_MIN, CV_GUARD_MEAN_RPS,
+// RPS_PER_POD_NOISE_FLOOR_RPS, HOURLY_PROFILE_MIN_HOURS).
 // Two vars are required (FORECAST_SERVICE_URL, PROMETHEUS_URL); all
 // others have sensible defaults.
 package config

@@ -33,7 +33,7 @@ type Forecaster interface {
 
 // ExplainRequest carries the context for a scale-explanation LLM call. It is
 // produced by the reconciler on every replica-changing event and consumed by
-// the ExplainWorker (Plan #6). Field set matches docs/design.md §6.2 — adding
+// the ExplainWorker (Plan #6). Field set matches docs/design_v2.md §6.2 — adding
 // or renaming a field requires updating the prompt template in
 // internal/explainer/prompt.go.
 type ExplainRequest struct {
@@ -78,7 +78,7 @@ type ExplainNotifier interface {
 //  2. Non-blockingly enqueue the new event.
 //
 // Both selects use a default branch so the reconciler never blocks even if
-// the channel is somehow saturated. See docs/design.md §6.2.
+// the channel is somehow saturated. See docs/design_v2.md §6.2.
 type ChannelNotifier struct {
 	Ch chan ExplainRequest
 }

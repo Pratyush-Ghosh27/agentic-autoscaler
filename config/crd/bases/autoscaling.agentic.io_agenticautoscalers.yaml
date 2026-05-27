@@ -62,7 +62,7 @@ spec:
               All fields except TargetRef are optional. Optional scaling-behaviour fields
               (MaxStepSize, ScaleUpCooldownSeconds, ScaleDownCooldownSeconds,
               PreferredForecaster) default to nil meaning "defer to the classifier";
-              see docs/design.md §8 for the full precedence chain.
+              see docs/design_v2.md §8 for the full precedence chain.
             properties:
               maxReplicas:
                 default: 10
@@ -73,7 +73,7 @@ spec:
               maxStepSize:
                 description: |-
                   MaxStepSize caps replicas moved per reconcile. nil means "defer to
-                  classifier". Operator override per docs/design.md §8.
+                  classifier". Operator override per docs/design_v2.md §8.
                 format: int32
                 minimum: 1
                 type: integer
@@ -106,7 +106,7 @@ spec:
                 default: 50
                 description: |-
                   RpsPerPodMin is the safety floor for the self-calibrating
-                  rps_per_pod estimate. See docs/design.md §5 step 5.
+                  rps_per_pod estimate. See docs/design_v2.md §5 step 5.
                 format: int32
                 minimum: 1
                 type: integer
@@ -146,7 +146,7 @@ spec:
           status:
             description: |-
               AgenticAutoscalerStatus reports the controller's observed state.
-              See docs/design.md §4.
+              See docs/design_v2.md §4.
             properties:
               classifiedParams:
                 description: ClassifiedParams is the classifier's most recent recommendation.
@@ -159,7 +159,7 @@ spec:
                   confidence:
                     description: |-
                       Confidence is "high" if HistoryPoints >= CLASSIFIER_HIGH_CONFIDENCE_POINTS,
-                      otherwise "medium". See docs/design.md §4.
+                      otherwise "medium". See docs/design_v2.md §4.
                     enum:
                     - high
                     - medium
@@ -289,13 +289,13 @@ spec:
               recommendedReplicas:
                 description: |-
                   RecommendedReplicas is the pre-cap, pre-cooldown replica recommendation.
-                  See docs/design.md §5 step 5.
+                  See docs/design_v2.md §5 step 5.
                 format: int32
                 type: integer
               rpsPerPodCurrent:
                 description: |-
                   RpsPerPodCurrent is the live sliding-window median rps_per_pod.
-                  Persisted for restart recovery (see docs/design.md §5).
+                  Persisted for restart recovery (see docs/design_v2.md §5).
                 format: int32
                 type: integer
               unboundedRecommended:

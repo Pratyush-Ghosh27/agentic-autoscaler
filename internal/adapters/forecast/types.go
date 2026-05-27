@@ -9,15 +9,16 @@ You may obtain a copy of the License at
 */
 
 // Package forecast is the Controller-side client for the Forecast Service.
-// See docs/design.md §5 for the wire contract.
+// See docs/design_v2.md §5 for the wire contract.
 package forecast
 
 // RecommendRequest is the body of POST /recommend.
 type RecommendRequest struct {
 	RpsHistory []float64 `json:"rps_history"`
 	WorkloadID string    `json:"workload_id,omitempty"`
-	// PreferredModel is "prophet", "linear_extrap", or "auto" / "" to defer.
-	// Per design §5, "auto" / null / absent must be wire-equivalent — so the
+	// PreferredModel is "prophet", "linear_extrap", "gbdt_quantile", or
+	// "auto" / "" to defer. Per design_v2.md §5, "auto" / null / absent must
+	// be wire-equivalent — so the
 	// adapter normalises "auto" to "" and the omitempty tag drops it.
 	PreferredModel string `json:"preferred_model,omitempty"`
 	// Context carries the cold-path-computed scalar features and the

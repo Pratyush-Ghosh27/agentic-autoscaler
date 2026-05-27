@@ -24,7 +24,7 @@ import (
 // Manager owns the lifecycle of one ClassifierWorker per
 // AgenticAutoscaler CR. The reconciler calls Ensure on every reconcile
 // (idempotent) and Stop on delete. The three trigger sources from
-// docs/design.md §6.1 are exposed as separate signal methods so the
+// docs/design_v2.md §6.1 are exposed as separate signal methods so the
 // reconciler doesn't need to know about the worker's channel internals.
 //
 // All public methods are safe to call from multiple goroutines.

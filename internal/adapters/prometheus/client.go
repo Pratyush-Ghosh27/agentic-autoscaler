@@ -10,7 +10,7 @@ You may obtain a copy of the License at
 
 // Package prometheus is the Controller-side PromQL HTTP client.
 // Designed to talk to the kube-prometheus-stack Prometheus over its
-// HTTP API. See docs/design.md §5 (hot path) and §6.1 (cold path).
+// HTTP API. See docs/design_v2.md §5 (hot path) and §6.1 (cold path).
 package prometheus
 
 import (

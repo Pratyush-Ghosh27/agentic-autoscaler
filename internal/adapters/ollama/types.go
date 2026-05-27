@@ -9,7 +9,7 @@ You may obtain a copy of the License at
 */
 
 // Package ollama is the Controller-side client for Ollama via the
-// OpenAI-compatible /v1/chat/completions endpoint. See docs/design.md §6.2.
+// OpenAI-compatible /v1/chat/completions endpoint. See docs/design_v2.md §6.2.
 package ollama
 
 // ChatMessage is one entry in the chat history.

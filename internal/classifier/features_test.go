@@ -172,7 +172,10 @@ func TestExtractFeatures_PeakToTroughHighMeanUnchanged(t *testing.T) {
 }
 
 func TestExtractFeatures_BelowTodOverlapReturnsZero(t *testing.T) {
-	// Need 60+10=70 points for tod_correlation; 50 points → 0.
+	// Pins the v1-cadence (1-min) ExtractFeatures path: at TodLag=60 the
+	// autocorr requires lag+MinTodOverlap = 70 points; 50 points → 0.
+	// The v2 cold path uses RunPipelineV2 + HourlyAutocorrLag(resolution),
+	// which at the default 5-min resolution needs only 12+10 = 22 points.
 	series := make([]float64, 50)
 	for i := range series {
 		series[i] = 100 + float64(i)

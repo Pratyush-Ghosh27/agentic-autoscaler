@@ -1,6 +1,6 @@
 """Startup warm-up.
 
-Per docs/design.md §5: the service performs one dummy Prophet fit on a
+Per docs/design_v2.md §5: the service performs one dummy Prophet fit on a
 small synthetic series during startup so the first real /recommend call
 doesn't pay the Stan compilation cost.
 """

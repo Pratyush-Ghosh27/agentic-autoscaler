@@ -97,3 +97,55 @@ def test_linear_extrap_invalid_window_env_falls_back_to_default(
     history = [float(i) for i in range(20)]
     predicted = forecast_linear_extrap(history, horizon_minutes=1)
     assert predicted == pytest.approx(20.0, abs=1e-6)
+
+
+# --- T6/T7/T8 shared helper --------------------------------------------------
+
+
+def _ctx(*, trend: float = 0.0, p95: int = 1000) -> "ContextPayload":  # noqa: F821
+    """Build a minimal ContextPayload for linear_extrap context tests.
+
+    Lazy-import keeps test collection cheap when only the no-context
+    tests are run."""
+    from forecast.models import ContextPayload
+
+    return ContextPayload(
+        baseline_rps=50,
+        peak_p95_rps=p95,
+        trend_24h_slope=trend,
+        hourly_profile=[50] * 24,
+        hourly_profile_valid=True,
+        current_hour_utc=12,
+        current_minute_utc=0,
+    )
+
+
+# --- T6: blend slope with context.trend_24h_slope (G15, F16) ----------------
+
+
+def test_linear_extrap_blends_slope_with_trend_24h_slope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T6 (F16 / G15): m_blended = WEIGHT * m + (1 - WEIGHT) * trend_24h_slope.
+
+    A flat recent window (m=0) blended at WEIGHT=0.5 with a long-term
+    trend of +0.2 rps/min should yield slope=0.1. Intercept stays at
+    np.polyfit's output (100.0 for the all-100 series) before T7's
+    centroid recompute lands. target_x = 10 + 10 - 1 = 19, so
+    predicted = 0.1 * 19 + 100 = 101.9.
+    """
+    monkeypatch.setenv("LINEAR_EXTRAP_RECENT_WEIGHT", "0.5")
+    monkeypatch.setenv("LINEAR_EXTRAP_WINDOW_MINUTES", "10")
+    history = [100.0] * 10
+    predicted = forecast_linear_extrap(
+        history, horizon_minutes=10, context=_ctx(trend=0.2)
+    )
+    assert predicted == pytest.approx(101.9, abs=0.01)
+
+
+def test_linear_extrap_ignores_trend_when_context_is_none() -> None:
+    """T6 (G15): with no context, behaviour matches pre-Phase-3
+    linear_extrap. Flat history -> flat prediction."""
+    history = [100.0] * 10
+    predicted = forecast_linear_extrap(history, horizon_minutes=5, context=None)
+    assert predicted == pytest.approx(100.0, abs=1e-6)

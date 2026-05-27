@@ -76,10 +76,14 @@ def recommend(
         except Exception as exc:  # noqa: BLE001 - any Prophet failure is a fallback trigger
             logging.warning("prophet failed, falling back to linear_extrap: %s", exc)
             forecast_prophet_failures_total.inc()
-            predicted = forecast_linear_extrap(rps_history, horizon_minutes)
+            predicted = forecast_linear_extrap(
+                rps_history, horizon_minutes, context=context
+            )
             model_used = "linear_extrap"
     else:
-        predicted = forecast_linear_extrap(rps_history, horizon_minutes)
+        predicted = forecast_linear_extrap(
+            rps_history, horizon_minutes, context=context
+        )
         model_used = "linear_extrap"
 
     return {

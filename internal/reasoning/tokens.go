@@ -69,3 +69,44 @@ func AllTokens() map[string]string {
 		"ScaleExplained":      ScaleExplained,
 	}
 }
+
+// pascalMap is the canonical snake_case → PascalCase mapping for the
+// K8s Event Reason field. The full table lives in design_v2.md §5
+// step 10 (E2 condenses it to a one-liner once all callers have been
+// migrated to use PascalReason()). G22/F39.
+//
+// PascalCase is the K8s ecosystem convention for the Reason field
+// (`kubectl describe`, `kubectl get events`, Grafana alert rules).
+// The snake_case form remains the canonical identifier in code (we
+// already use it as the constant value and as the prefix in the event
+// message body for log searchability).
+var pascalMap = map[string]string{
+	ScaleUp:             "ScaleUp",
+	ScaleDown:           "ScaleDown",
+	NoChange:            "NoChange",
+	StepCappedUp:        "StepCappedUp",
+	StepCappedDown:      "StepCappedDown",
+	CooldownHoldingUp:   "CooldownHoldingUp",
+	CooldownHoldingDown: "CooldownHoldingDown",
+	MaxReplicasBinding:  "MaxReplicasBinding",
+	MinReplicasBinding:  "MinReplicasBinding",
+	KillSwitched:        "KillSwitched",
+	ConflictDetected:    "ConflictDetected",
+	ForecastUnavailable: "ForecastUnavailable",
+	MetricsUnavailable:  "MetricsUnavailable",
+	PatternClassified:   "PatternClassified",
+	PatternUnknown:      "PatternUnknown",
+	ScaleExplained:      "ScaleExplained",
+}
+
+// PascalReason returns the PascalCase K8s Event Reason for the given
+// snake_case reasoning token. Unknown tokens are returned unchanged
+// (defensive: a typo at the call-site should never silently produce
+// an empty Reason field; an unmapped value at least surfaces as a
+// noticeable, debuggable Reason). G22/F39.
+func PascalReason(snake string) string {
+	if p, ok := pascalMap[snake]; ok {
+		return p
+	}
+	return snake
+}

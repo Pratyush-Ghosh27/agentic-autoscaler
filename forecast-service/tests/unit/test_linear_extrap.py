@@ -129,10 +129,10 @@ def test_linear_extrap_blends_slope_with_trend_24h_slope(
     """T6 (F16 / G15): m_blended = WEIGHT * m + (1 - WEIGHT) * trend_24h_slope.
 
     A flat recent window (m=0) blended at WEIGHT=0.5 with a long-term
-    trend of +0.2 rps/min should yield slope=0.1. Intercept stays at
-    np.polyfit's output (100.0 for the all-100 series) before T7's
-    centroid recompute lands. target_x = 10 + 10 - 1 = 19, so
-    predicted = 0.1 * 19 + 100 = 101.9.
+    trend of +0.2 rps/min yields slope=0.1. Combined with T7's F31
+    centroid recompute, intercept becomes
+    ``y_bar - m_blended * x_bar = 100 - 0.1 * 4.5 = 99.55``, so at
+    target_x = 19 the prediction is ``0.1 * 19 + 99.55 = 101.45``.
     """
     monkeypatch.setenv("LINEAR_EXTRAP_RECENT_WEIGHT", "0.5")
     monkeypatch.setenv("LINEAR_EXTRAP_WINDOW_MINUTES", "10")
@@ -140,7 +140,7 @@ def test_linear_extrap_blends_slope_with_trend_24h_slope(
     predicted = forecast_linear_extrap(
         history, horizon_minutes=10, context=_ctx(trend=0.2)
     )
-    assert predicted == pytest.approx(101.9, abs=0.01)
+    assert predicted == pytest.approx(101.45, abs=0.01)
 
 
 def test_linear_extrap_ignores_trend_when_context_is_none() -> None:
@@ -149,3 +149,35 @@ def test_linear_extrap_ignores_trend_when_context_is_none() -> None:
     history = [100.0] * 10
     predicted = forecast_linear_extrap(history, horizon_minutes=5, context=None)
     assert predicted == pytest.approx(100.0, abs=1e-6)
+
+
+# --- T7: re-anchor intercept at the data centroid after blend (F31) ----------
+
+
+def test_linear_extrap_intercept_is_centroid_anchored_after_blend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T7 (F31 / G15): after blending the slope we must recompute the
+    intercept so the line continues to pass through the data centroid
+    ``(mean(x), mean(y))``. Without F31 the slope blend rotates the
+    line around ``x=0`` instead, which biases predictions toward 0
+    whenever the polyfit intercept is far from y_bar.
+
+    Construction:
+      history = [0, 0, 0, 0, 0, 100] over n=6.
+      np.polyfit gives m_recent and an intercept that already lies on
+      the centroid (OLS does that for us): mean(y) = 100/6 ≈ 16.667,
+      mean(x) = 2.5.
+      Blend at WEIGHT=0.0 with trend=0 sets the slope to 0.
+      Without F31 the original polyfit intercept (negative, off the
+      centroid) is reused -> predicted clamps to 0.
+      With F31 the intercept is recomputed: b = y_bar - 0 * x_bar
+      = 16.667 -> predicted = 0*10 + 16.667 = 16.667 at target_x = 10.
+    """
+    monkeypatch.setenv("LINEAR_EXTRAP_RECENT_WEIGHT", "0.0")
+    monkeypatch.setenv("LINEAR_EXTRAP_WINDOW_MINUTES", "10")
+    history = [0.0, 0.0, 0.0, 0.0, 0.0, 100.0]
+    predicted = forecast_linear_extrap(
+        history, horizon_minutes=5, context=_ctx(trend=0.0)
+    )
+    assert predicted == pytest.approx(16.6667, abs=0.01)

@@ -134,6 +134,12 @@ def forecast_linear_extrap(
     if context is not None:
         w = _recent_weight()
         slope = w * slope + (1.0 - w) * context.trend_24h_slope
+        # F31: re-anchor the intercept at the data centroid so the
+        # line continues to pass through (mean(x), mean(y)) after the
+        # slope change. Without this the blend rotates the line around
+        # x=0 instead, which biases predictions toward 0 whenever the
+        # original polyfit intercept is far from y_bar.
+        intercept = float(np.mean(series)) - slope * float(np.mean(x))
 
     target_x = n + horizon_minutes - 1
     predicted = slope * target_x + intercept

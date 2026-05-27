@@ -1,6 +1,6 @@
 # **Agentic Autoscaler — Design Spec**
 
-Date: 2026-05-25 Status: Draft for team review (v2 — complete spec; supersedes v1 dated 2026-05-21)
+Date: 2026-05-27 Status: Approved (v2 — complete spec; supersedes v1 dated 2026-05-21)
 
 Audit history: `docs/v2_revision notes.md` (append-only). This file is current-state only.
 
@@ -488,28 +488,7 @@ A `max_replicas_binding` event without a `step_capped_*` or `cooldown_holding_*`
       * `conflict_detected` (HPA conflict pre-check)  
       * `forecast_unavailable` (see §9)  
       * `metrics_unavailable` (see §9)  
-    * K8s Event `Reason` field naming: the snake_case reasoning tokens are the canonical identifiers; the actual K8s Event `Reason` field uses their PascalCase equivalent. The full mapping (covering Reconciler, ClassifierWorker, and ExplainWorker tokens):
-
-| snake_case token | PascalCase `Reason` | Emitter |
-| --- | --- | --- |
-| `scale_up` | `ScaleUp` | Reconciler |
-| `scale_down` | `ScaleDown` | Reconciler |
-| `no_change` | `NoChange` | Reconciler |
-| `step_capped_up` | `StepCappedUp` | Reconciler |
-| `step_capped_down` | `StepCappedDown` | Reconciler |
-| `cooldown_holding_up` | `CooldownHoldingUp` | Reconciler |
-| `cooldown_holding_down` | `CooldownHoldingDown` | Reconciler |
-| `max_replicas_binding` | `MaxReplicasBinding` | Reconciler |
-| `min_replicas_binding` | `MinReplicasBinding` | Reconciler |
-| `kill_switched` | `KillSwitched` | Reconciler |
-| `conflict_detected` | `ConflictDetected` | Reconciler |
-| `forecast_unavailable` | `ForecastUnavailable` | Reconciler |
-| `metrics_unavailable` | `MetricsUnavailable` | Reconciler |
-| `pattern_classified` | `PatternClassified` | ClassifierWorker (§6.1) |
-| `pattern_unknown` | `PatternUnknown` | ClassifierWorker (§6.1) |
-| `scale_explained` | `ScaleExplained` | ExplainWorker (§6.2) |
-
-The snake_case token is included verbatim in the event message body for log searchability.
+    * K8s Event `Reason` field naming: the snake_case reasoning tokens are the canonical identifiers and appear verbatim in the message body for log searchability; the K8s Event `Reason` field carries the PascalCase equivalent per K8s convention (e.g., `scale_up` → `ScaleUp`, `max_replicas_binding` → `MaxReplicasBinding`). The full per-token mapping is implemented in `internal/reasoning/tokens.go` (`PascalReason` function) and pinned by `internal/reasoning/tokens_test.go::TestPascalReason_AllTokensHaveMapping` so the table cannot drift from code.
 
     * Event message includes `current_rps`, `predicted_rps`, `current_replicas`, `target`, `recommendedReplicas`, `unboundedRecommended` (when it differs from `recommendedReplicas`), `model_used`, and the effective params used in this reconcile. The `unboundedRecommended` field surfaces capacity-planning signals: when it exceeds `spec.maxReplicas`, the operator can see exactly how much capacity the forecast asked for vs. how much the CRD bound permits, regardless of whether replicas changed this reconcile. After emitting any replica-changing event (`scale_up`, `scale_down`, `step_capped_up`, `step_capped_down`, or `max_replicas_binding` / `min_replicas_binding` *when replicas changed*): perform a drop-and-replace send to the ExplainWorker's buffered channel — see §6.2 for the channel semantics. The reconcile loop never waits on this send.  
 11. Update CR status (`currentReplicas`, `recommendedReplicas`, `predictedRPS`, `rpsPerPodCurrent`, `lastScaleTime`, `phase`, `conflictReason` if applicable). `status.recommendedReplicas` is the pre-cap, pre-cooldown value computed in step 5 (the `recommendedReplicas` local variable), not the post-cap target that step 6 mutates and step 9 patches. Publishing the unclipped recommendation is what lets the operator see "we wanted N but caps/cooldowns are preventing it." `lastScaleTime` is written as `max(lastScaleUpTime, lastScaleDownTime)` — the most recent scale event in either direction. The reconciler does not write `classifiedParams` — that field is owned exclusively by the ClassifierWorker.

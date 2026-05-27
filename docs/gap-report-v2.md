@@ -348,3 +348,30 @@ The dependency order is mostly forced. Treat the buckets as one PR each (or one 
 **Total estimate.** ~10–12 days of focused engineering for a single contributor, distributed across roughly five PRs (one per bucket, with G16/G17/G20/G22 grouped into one bug-fix-sweep PR). Each PR should be gated by the existing nightly E2E; once G12 is in, the nightly should be expanded with a `spiky` scenario that asserts `model_used == "gbdt_quantile"` to lock in the third-forecaster guarantee.
 
 If the v2 release scope shrinks: **G10 + G11 + G21 + G15 + G16 + G17** are the smallest set that delivers a meaningfully more accurate v2 hot path without taking on the GBDT/`Context`-writes-from-classifier work in earnest. That subset is ~5 days and ships as one PR sequence.
+
+---
+
+## 5. Closure status (2026-05-27)
+
+All v2 gaps G10–G22 are closed. G23 was doc-only and required no code work. The closing plan for each gap:
+
+| Gap | Severity | Closed by |
+| --- | --- | --- |
+| G10 — Forecast Service `context` end-to-end plumbing | CRITICAL | Plan 13 (Phase 2 — v2 Foundations) |
+| G11 — Cold-path 5-min cadence + new features + raised thresholds | CRITICAL | Plan 13 (Phase 2 — v2 Foundations) |
+| G12 — Third forecaster `gbdt_quantile` | CRITICAL | Plan 14 (Phase 3 — v2 Forecaster Surface) |
+| G13 — `recommendedReplicas` clamp + binding tokens + `unboundedRecommended` | HIGH | Plan 15 (Phase 4 — v2 Operator Visibility) |
+| G14 — Prophet `ds` anchoring + hourly regressor | HIGH | Plan 14 (Phase 3 — v2 Forecaster Surface) |
+| G15 — Linear extrap blend + intercept recompute + window env | HIGH | Plan 14 (Phase 3 — v2 Forecaster Surface) |
+| G16 — Generation watcher → revision annotation | HIGH | Plan 16 (Phase 5 — v2 Bug-fix Sweep) |
+| G17 — Ring buffer 5-copy seed | MEDIUM | Plan 16 (Phase 5 — v2 Bug-fix Sweep) |
+| G18 — ExplainWorker prompt context + binding-token conditionals | MEDIUM | Plan 15 (Phase 4 — v2 Operator Visibility) |
+| G19 — Pattern-driven forecaster selector | MEDIUM | Plan 14 (Phase 3 — v2 Forecaster Surface) |
+| G20 — Webhook strict inequality + CRD enum widen | MEDIUM | Plan 14 (Phase 3 — enum widen) + Plan 16 (Phase 5 — strict inequality) |
+| G21 — Env-var defaults realignment | MEDIUM | Plan 13 (Phase 2 — v2 Foundations) |
+| G22 — K8s Event Reason PascalCase | LOW | Plan 16 (Phase 5 — v2 Bug-fix Sweep) |
+| G23 — Doc-only findings | DOC | Plan 12 (Phase 1 — v2 Spec Edits) |
+
+Per-criterion test coverage is enumerated in `docs/v2-acceptance-coverage.md`.
+
+This footer is the formal close-out of `gap-report-v2.md`. Future v2.x audits should produce a new gap report (e.g., `gap-report-v2.1.md`) rather than reopening this one.

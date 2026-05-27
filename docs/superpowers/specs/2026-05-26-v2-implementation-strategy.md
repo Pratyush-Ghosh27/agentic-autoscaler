@@ -63,6 +63,7 @@ The work is partitioned into six phases. Phase boundaries are chosen so each pha
 **F-findings addressed:** F7 (D3 affirmed), F8 (D5 annotation), F9 (D4 boundary paragraph), F16/F31 (D12 rename), F22 (D11 auto-mode subsection), F25 (E4 cross-ref verification), F40 (E6 token consistency).
 **Acceptance:** `design_v2.md` passes internal consistency checks; all §-cross-references resolve; glossary covers all 15+ terms; acceptance criteria section lists 20+ testable assertions.
 **Estimated effort:** 1.5 days.
+**Status:** completed 2026-05-26 (Plan 12 — `docs/superpowers/plans/2026-05-26-plan-12-v2-spec-edits.md`).
 
 ### Phase 2 — Foundations (Go + Python schema wiring)
 
@@ -73,6 +74,7 @@ The work is partitioned into six phases. Phase boundaries are chosen so each pha
 **Spec-trailer edits landed alongside:** E1 (K_TOD_DOWN disclaimer removal), E3 (F2a-revisited prose tightening).
 **Acceptance:** `make test` passes; CRD has `Context` subfields; classifier worker writes all 5 context fields on a 5-min-cadence Prometheus series; controller forwards context to `/recommend`; env vars from v2 §4 tables are all parseable.
 **Estimated effort:** 4 days.
+**Status:** completed 2026-05-26 (Plan 13 — `docs/superpowers/plans/2026-05-26-plan-13-v2-foundations.md`).
 
 ### Phase 3 — Forecaster surface (Python + Go)
 
@@ -82,6 +84,7 @@ The work is partitioned into six phases. Phase boundaries are chosen so each pha
 **F-findings addressed (code-side):** F3a/F17 (Prophet ds anchor), F5 (PROPHET_MIN_POINTS=30), F6 (current_hour_utc validation), F16/F31 (linear blend + intercept recompute), F20 ring-buffer-indirectly (GBDT path adds env), F21 (GBDT timestamp anchor), F22 (auto never picks gbdt in code).
 **Acceptance:** Each forecaster has unit tests asserting spec-mandated behavior; `/recommend?preferred_model=gbdt_quantile` returns valid predictions; auto mode provably never returns `gbdt_quantile`; classifier `spiky` pattern maps to `gbdt_quantile`.
 **Estimated effort:** 4 days.
+**Status:** completed 2026-05-27 (Plan 14 — `docs/superpowers/plans/2026-05-26-plan-14-v2-forecaster-surface.md`).
 
 ### Phase 4 — Operator visibility (Go)
 
@@ -91,6 +94,7 @@ The work is partitioned into six phases. Phase boundaries are chosen so each pha
 **F-findings addressed (code-side):** F12 (Pattern!="" gate in prompt), F27 (unboundedRecommended + binding tokens), F33 (prompt conditionals for binding tokens).
 **Acceptance:** When forecast exceeds maxReplicas, event message contains `unboundedRecommended`; ExplainWorker prompt includes "Long-term context" line when Pattern is non-empty; binding-token prose includes CRD-bound value.
 **Estimated effort:** 2 days.
+**Status:** completed 2026-05-27 (Plan 15 — `docs/superpowers/plans/2026-05-27-plan-15-v2-operator-visibility.md`).
 
 ### Phase 5 — Bug-fix sweep (Go + Python + manifests)
 
@@ -101,6 +105,7 @@ The work is partitioned into six phases. Phase boundaries are chosen so each pha
 **Spec-trailer edit landed alongside:** E2 (PascalCase mapping condensation — one-liner replaces 16-row table once G22 lands).
 **Acceptance:** envtest proves `/scale` patch does NOT signal re-classification; ring buffer seeds 5 copies; webhook rejects `maxReplicas == minReplicas`; `kubectl get events` shows PascalCase Reason fields.
 **Estimated effort:** 2 days.
+**Status:** completed 2026-05-27 (Plan 16 — `docs/superpowers/plans/2026-05-27-plan-16-v2-bugfix-sweep.md`).
 
 ### Phase 6 — Final verification and banner flip
 
@@ -109,6 +114,7 @@ The work is partitioned into six phases. Phase boundaries are chosen so each pha
 **Items closed:** E11, D10 gate satisfied.
 **Acceptance:** `make test` + nightly E2E both green; `design_v2.md` line 3 reads "Status: Approved"; gap-report-v2.md can be annotated "all gaps closed."
 **Estimated effort:** 0.5 days.
+**Status:** completed 2026-05-27 (Plan 17 — `docs/superpowers/plans/2026-05-27-plan-17-v2-final-verification.md`). All v2 work is closed.
 
 **Total estimated effort:** ~14 days single-contributor, distributed across 6 plans.
 
@@ -254,4 +260,5 @@ Phase 1 plan is drafted in full alongside this strategy (see `plan-12`). Phases 
 - [x] Dependency graph in §4 matches the "Depends on" column in §6
 - [x] Estimated effort sums to ~14 days (consistent with gap-report-v2.md's 10–12 day code estimate plus 1.5–2 days spec work)
 - [x] No circular dependencies between phases
+- [x] All 6 phases marked complete with their merge-dates and plan references (Phase 6 T5)
 

@@ -40,10 +40,17 @@ type Manager struct {
 }
 
 type workerHandle struct {
-	cancel            context.CancelFunc
-	reclassifyCh      chan struct{}
-	generationCh      chan struct{}
-	lastDeploymentGen int64
+	cancel       context.CancelFunc
+	reclassifyCh chan struct{}
+	generationCh chan struct{}
+	// lastDeploymentRevision tracks the most recent value of the target
+	// Deployment's `deployment.kubernetes.io/revision` annotation observed
+	// via ObserveDeploymentRevision. Unlike metadata.generation, the
+	// revision annotation is only bumped on actual rollouts (image / env /
+	// command changes that produce a new ReplicaSet) — NOT on /scale
+	// patches. See design_v2.md:768 and F19.
+	lastDeploymentRevision string
+	revisionInitialized    bool
 }
 
 // NewManager constructs a Manager. rootCtx is the long-lived context
@@ -142,34 +149,59 @@ func (m *Manager) SignalReclassify(key types.NamespacedName) {
 	dropAndPush(h.reclassifyCh)
 }
 
-// ObserveDeploymentGeneration tracks the target Deployment's
-// .metadata.generation and pushes onto the worker's GenerationCh
-// (drop-and-replace) when the value changes. The worker's own dedup
-// window (CLASSIFIER_DEDUP_SECONDS) suppresses runaway reclassification
-// when the CR's first reconcile and the informer's first sync both
-// observe a "new" generation simultaneously.
+// ObserveDeploymentRevision tracks the target Deployment's
+// `deployment.kubernetes.io/revision` annotation and pushes onto the
+// worker's GenerationCh (drop-and-replace) when the value changes.
+// Unlike metadata.generation, the revision annotation is only bumped on
+// actual rollouts (image / env / command changes that produce a new
+// ReplicaSet) — NOT on /scale patches the controller itself issues.
+// See design_v2.md:768 and F19.
 //
-// Returns true iff a generation signal was emitted.
-func (m *Manager) ObserveDeploymentGeneration(key types.NamespacedName, gen int64) bool {
+// The worker's own dedup window (CLASSIFIER_DEDUP_SECONDS) suppresses
+// runaway reclassification when the CR's first reconcile and the
+// informer's first sync both observe a "new" revision simultaneously.
+//
+// Returns true iff a revision-change signal was emitted.
+func (m *Manager) ObserveDeploymentRevision(key types.NamespacedName, revision string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h, ok := m.workers[key]
 	if !ok {
 		return false
 	}
-	if h.lastDeploymentGen == 0 {
+	if !h.revisionInitialized {
 		// First observation — record but don't fire. The worker's
 		// immediate-first-run trigger has already classified at
 		// startup; signalling here would just queue a redundant pass.
-		h.lastDeploymentGen = gen
+		// We use revisionInitialized rather than `revision == ""` as
+		// the first-observation marker because empty is a legitimate
+		// initial state (no rollout has happened yet on this Deployment).
+		h.lastDeploymentRevision = revision
+		h.revisionInitialized = true
 		return false
 	}
-	if h.lastDeploymentGen == gen {
+	if h.lastDeploymentRevision == revision {
 		return false
 	}
-	h.lastDeploymentGen = gen
+	h.lastDeploymentRevision = revision
 	dropAndPush(h.generationCh)
 	return true
+}
+
+// LastDeploymentRevision returns the revision string most recently
+// observed via ObserveDeploymentRevision for the given key. Returns
+// the empty string when no observation has been recorded (worker not
+// running, or key unknown). Exposed for tests that need to verify the
+// reconciler is reading the revision annotation rather than the
+// generation field.
+func (m *Manager) LastDeploymentRevision(key types.NamespacedName) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h, ok := m.workers[key]
+	if !ok {
+		return ""
+	}
+	return h.lastDeploymentRevision
 }
 
 // HasWorker reports whether a worker is currently running for key.

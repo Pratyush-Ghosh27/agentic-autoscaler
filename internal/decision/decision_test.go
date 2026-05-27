@@ -5,6 +5,7 @@ Copyright 2026.
 package decision_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -142,6 +143,58 @@ func TestComputeRecommended_NonPositiveRpsPerPodFailsToMax(t *testing.T) {
 	// scaling out to the maximum.
 	assert.Equal(t, int32(10), decision.ComputeRecommended(500, 0, 1, 10))
 	assert.Equal(t, int32(10), decision.ComputeRecommended(500, -3, 1, 10))
+}
+
+// -----------------------------------------------------------------------
+// ComputeUnboundedRecommended + ClampRecommended — design §5 step 5
+// (the G13 split: unbounded value first, clamp + binding reason second).
+// -----------------------------------------------------------------------
+
+func TestComputeUnboundedRecommended_TrivialCases(t *testing.T) {
+	t.Run("zero rps per pod returns sentinel", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(100.0, 0.0)
+		assert.Equal(t, int32(math.MaxInt32), got,
+			"unbounded math is undefined at rpsPerPod=0; sentinel surfaces it")
+	})
+	t.Run("negative rps per pod returns sentinel", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(100.0, -1.0)
+		assert.Equal(t, int32(math.MaxInt32), got)
+	})
+	t.Run("ceiling rounds up", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(101.0, 10.0)
+		assert.Equal(t, int32(11), got)
+	})
+	t.Run("exact multiple no ceiling overshoot", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(100.0, 10.0)
+		assert.Equal(t, int32(10), got)
+	})
+}
+
+func TestClampRecommended_NoBindingWhenInsideRange(t *testing.T) {
+	clamped, reason := decision.ClampRecommended(7, 2, 10)
+	assert.Equal(t, int32(7), clamped)
+	assert.Equal(t, "", reason,
+		"in-range recommendation must not set a binding reason")
+}
+
+func TestClampRecommended_MaxBinding(t *testing.T) {
+	clamped, reason := decision.ClampRecommended(15, 2, 10)
+	assert.Equal(t, int32(10), clamped)
+	assert.Equal(t, "max_replicas_binding", reason)
+}
+
+func TestClampRecommended_MinBinding(t *testing.T) {
+	clamped, reason := decision.ClampRecommended(1, 2, 10)
+	assert.Equal(t, int32(2), clamped)
+	assert.Equal(t, "min_replicas_binding", reason)
+}
+
+func TestClampRecommended_SentinelClampsToMax(t *testing.T) {
+	// rpsPerPod=0 path: ComputeUnboundedRecommended returned math.MaxInt32;
+	// clamp must still produce a valid replica count and surface MaxBinding.
+	clamped, reason := decision.ClampRecommended(math.MaxInt32, 2, 10)
+	assert.Equal(t, int32(10), clamped)
+	assert.Equal(t, "max_replicas_binding", reason)
 }
 
 // -----------------------------------------------------------------------

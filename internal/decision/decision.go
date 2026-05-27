@@ -129,11 +129,48 @@ func classifiedFieldStr(c *ClassifiedParams, f func(*ClassifiedParams) string) *
 	return &v
 }
 
+// ComputeUnboundedRecommended returns the raw forecaster-driven replica count,
+// ceil(predictedRPS / rpsPerPod), with no CRD-bound clamp. When rpsPerPod is
+// non-positive the result is math.MaxInt32 — a sentinel that subsequent
+// ClampRecommended turns into maxReplicas (the failsafe). Surfacing the
+// sentinel (rather than silently returning maxReplicas here) lets callers
+// distinguish "forecast over the cap" from "no usable rps_per_pod".
+func ComputeUnboundedRecommended(predictedRPS, rpsPerPod float64) int32 {
+	if rpsPerPod <= 0 {
+		return math.MaxInt32
+	}
+	return int32(math.Ceil(predictedRPS / rpsPerPod))
+}
+
+// ClampRecommended applies the CRD bounds and reports which bound (if any)
+// was the binding constraint. The returned reasoning string is one of:
+//   - "max_replicas_binding"  when unbounded > maxReplicas (clamped to max)
+//   - "min_replicas_binding"  when unbounded < minReplicas (clamped to min)
+//   - ""                       when unbounded is already in [min, max]
+//
+// Per design §5 precedence rule 1, this binding reason is *tentative* —
+// step 6 (cap) and step 7 (cooldown) may overwrite it in ApplyCapAndCooldown.
+// The string literals are duplicated from reasoning.MaxReplicasBinding /
+// MinReplicasBinding to avoid importing reasoning into decision (decision
+// is the lower-level package). The tokens_test snapshot pins them in sync.
+func ClampRecommended(unbounded, minReplicas, maxReplicas int32) (int32, string) {
+	if unbounded > maxReplicas {
+		return maxReplicas, "max_replicas_binding"
+	}
+	if unbounded < minReplicas {
+		return minReplicas, "min_replicas_binding"
+	}
+	return unbounded, ""
+}
+
 // ComputeRecommended calculates the raw recommendedReplicas (pre-cap,
 // pre-cooldown), per design §5 step 5: ceil(predicted / rps_per_pod) clamped
 // to [minReplicas, maxReplicas]. If rps_per_pod <= 0 we fail safe to
 // maxReplicas — the math is undefined and we'd rather over-provision than
 // under-provision in that edge case.
+//
+// Deprecated: split into ComputeUnboundedRecommended + ClampRecommended.
+// Retired in Plan 15 Task 3 once the reconciler is migrated.
 func ComputeRecommended(predictedRPS, rpsPerPod float64, minReplicas, maxReplicas int32) int32 {
 	if rpsPerPod <= 0 {
 		return maxReplicas

@@ -290,13 +290,19 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			Reason:                capOut.Reason,
 			CurrentReplicas:       currentReplicas,
 			RecommendedReplicas:   recommended,
+			UnboundedRecommended:  unbounded,
 			TargetReplicas:        capOut.Target,
+			MaxReplicas:           maxReplicas,
+			MinReplicas:           minReplicas,
 			CurrentRPS:            currentRPS,
 			PredictedRPS:          forecastResp.PredictedRPS,
 			HorizonMinutes:        forecastResp.HorizonMinutes,
 			ModelUsed:             forecastResp.ModelUsed,
 			Pattern:               classifiedPattern(&aas),
 			Confidence:            classifiedConfidence(&aas),
+			BaselineRPS:           classifiedBaselineRPS(&aas),
+			PeakP95RPS:            classifiedPeakP95RPS(&aas),
+			HourlyProfileValid:    classifiedHourlyProfileValid(&aas),
 			EffectiveCooldownUp:   effective.CooldownUp,
 			EffectiveCooldownDown: effective.CooldownDown,
 			EffectiveMaxStep:      effective.MaxStep,
@@ -512,6 +518,33 @@ func classifiedConfidence(aas *autoscalingv1alpha1.AgenticAutoscaler) string {
 		return ""
 	}
 	return aas.Status.ClassifiedParams.Confidence
+}
+
+// classifiedBaselineRPS returns the cold-path baseline if classified; else 0.
+// Zero is a valid measurement (a workload genuinely serving zero RPS) — the
+// ExplainWorker prompt template's Long-term context line surfaces it
+// unchanged. See docs/design_v2.md §6.2 (F12).
+func classifiedBaselineRPS(aas *autoscalingv1alpha1.AgenticAutoscaler) int32 {
+	if aas.Status.ClassifiedParams == nil || aas.Status.ClassifiedParams.Context == nil {
+		return 0
+	}
+	return aas.Status.ClassifiedParams.Context.BaselineRPS
+}
+
+// classifiedPeakP95RPS returns the cold-path p95 if classified; else 0.
+func classifiedPeakP95RPS(aas *autoscalingv1alpha1.AgenticAutoscaler) int32 {
+	if aas.Status.ClassifiedParams == nil || aas.Status.ClassifiedParams.Context == nil {
+		return 0
+	}
+	return aas.Status.ClassifiedParams.Context.PeakP95RPS
+}
+
+// classifiedHourlyProfileValid returns the cold-path coverage flag; else false.
+func classifiedHourlyProfileValid(aas *autoscalingv1alpha1.AgenticAutoscaler) bool {
+	if aas.Status.ClassifiedParams == nil || aas.Status.ClassifiedParams.Context == nil {
+		return false
+	}
+	return aas.Status.ClassifiedParams.Context.HourlyProfileValid
 }
 
 // durationSecondsAsInt32 expresses a Duration in seconds, clamped to the

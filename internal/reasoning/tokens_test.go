@@ -17,6 +17,8 @@ func TestAllTokens_StableSet(t *testing.T) {
 		"StepCappedDown":      "step_capped_down",
 		"CooldownHoldingUp":   "cooldown_holding_up",
 		"CooldownHoldingDown": "cooldown_holding_down",
+		"MaxReplicasBinding":  "max_replicas_binding",
+		"MinReplicasBinding":  "min_replicas_binding",
 		"KillSwitched":        "kill_switched",
 		"ConflictDetected":    "conflict_detected",
 		"ForecastUnavailable": "forecast_unavailable",
@@ -28,6 +30,15 @@ func TestAllTokens_StableSet(t *testing.T) {
 
 	got := AllTokens()
 	assert.Equal(t, expected, got, "reasoning-token inventory drift; update both the constants and this test in the same commit")
+}
+
+// TestBindingTokenConstants pins the wire format of the two G13 binding
+// tokens. decision.ClampRecommended returns these string literals
+// directly (avoiding an import cycle); changing either string here without
+// updating decision.go is a silent regression.
+func TestBindingTokenConstants(t *testing.T) {
+	assert.Equal(t, "max_replicas_binding", MaxReplicasBinding)
+	assert.Equal(t, "min_replicas_binding", MinReplicasBinding)
 }
 
 func TestAnnotation_KillSwitchKey(t *testing.T) {

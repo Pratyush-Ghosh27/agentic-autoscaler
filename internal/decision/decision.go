@@ -129,28 +129,43 @@ func classifiedFieldStr(c *ClassifiedParams, f func(*ClassifiedParams) string) *
 	return &v
 }
 
-// ComputeRecommended calculates the raw recommendedReplicas (pre-cap,
-// pre-cooldown), per design §5 step 5: ceil(predicted / rps_per_pod) clamped
-// to [minReplicas, maxReplicas]. If rps_per_pod <= 0 we fail safe to
-// maxReplicas — the math is undefined and we'd rather over-provision than
-// under-provision in that edge case.
-func ComputeRecommended(predictedRPS, rpsPerPod float64, minReplicas, maxReplicas int32) int32 {
+// ComputeUnboundedRecommended returns the raw forecaster-driven replica count,
+// ceil(predictedRPS / rpsPerPod), with no CRD-bound clamp. When rpsPerPod is
+// non-positive the result is math.MaxInt32 — a sentinel that subsequent
+// ClampRecommended turns into maxReplicas (the failsafe). Surfacing the
+// sentinel (rather than silently returning maxReplicas here) lets callers
+// distinguish "forecast over the cap" from "no usable rps_per_pod".
+func ComputeUnboundedRecommended(predictedRPS, rpsPerPod float64) int32 {
 	if rpsPerPod <= 0 {
-		return maxReplicas
+		return math.MaxInt32
 	}
-	raw := int32(math.Ceil(predictedRPS / rpsPerPod))
-	if raw < minReplicas {
-		return minReplicas
+	return int32(math.Ceil(predictedRPS / rpsPerPod))
+}
+
+// ClampRecommended applies the CRD bounds and reports which bound (if any)
+// was the binding constraint. The returned reasoning string is one of:
+//   - "max_replicas_binding"  when unbounded > maxReplicas (clamped to max)
+//   - "min_replicas_binding"  when unbounded < minReplicas (clamped to min)
+//   - ""                       when unbounded is already in [min, max]
+//
+// Per design §5 precedence rule 1, this binding reason is *tentative* —
+// step 6 (cap) and step 7 (cooldown) may overwrite it in ApplyCapAndCooldown.
+// The string literals are duplicated from reasoning.MaxReplicasBinding /
+// MinReplicasBinding to avoid importing reasoning into decision (decision
+// is the lower-level package). The tokens_test snapshot pins them in sync.
+func ClampRecommended(unbounded, minReplicas, maxReplicas int32) (int32, string) {
+	if unbounded > maxReplicas {
+		return maxReplicas, "max_replicas_binding"
 	}
-	if raw > maxReplicas {
-		return maxReplicas
+	if unbounded < minReplicas {
+		return minReplicas, "min_replicas_binding"
 	}
-	return raw
+	return unbounded, ""
 }
 
 // CapInput feeds ApplyCapAndCooldown.
 type CapInput struct {
-	Recommended   int32
+	Recommended   int32 // post-clamp value from ClampRecommended
 	Current       int32
 	MaxStep       int32
 	CooldownUp    int32 // seconds
@@ -158,6 +173,12 @@ type CapInput struct {
 	LastScaleUp   time.Time
 	LastScaleDown time.Time
 	Now           time.Time
+	// BindingReason is the tentative reasoning token set by step 5
+	// (decision.ClampRecommended). One of reasoning.MaxReplicasBinding,
+	// reasoning.MinReplicasBinding, or "". Step 6 (cap) and step 7
+	// (cooldown) overwrite it when those constraints also fire. Step 8
+	// hysteresis preserves it — the binding-without-replica-change branch.
+	BindingReason string
 }
 
 // CapOutput is the result of applying step cap + cooldown + hysteresis.
@@ -172,18 +193,25 @@ type CapOutput struct {
 	ShouldPatch bool
 }
 
-// ApplyCapAndCooldown implements design §5 steps 6-8:
-//  1. step cap (maxStepSize) — emit step_capped_{up,down} tokens
-//  2. cooldown gate — overrides step cap; emit cooldown_holding_{up,down}
-//     and zero out the patch
-//  3. hysteresis — when target == current, emit no_change with no patch
+// ApplyCapAndCooldown implements design_v2.md §5 steps 6-8 with the
+// precedence chain from §5 precedence rules 1-4:
 //
-// The cooldown-overrides-step-cap precedence is critical for design parity:
-// a request that's both clipped and cool-down-blocked must surface as
-// cooldown_holding_*, never step_capped_*.
+//  1. Start with the tentative binding reason from step 5
+//     (in.BindingReason, set by ClampRecommended).
+//  2. Step cap (maxStepSize) — overwrites with step_capped_{up,down}
+//     when the cap clips the move.
+//  3. Cooldown — overwrites with cooldown_holding_{up,down} when it
+//     blocks the move entirely.
+//  4. Hysteresis (target == current) — preserves the binding reason if
+//     any is still set, else emits no_change.
+//
+// When target moves (case target > current or target < current), the
+// reason is always overwritten by step 6 / 7 / scale_{up,down}; the
+// binding reason in those branches is implicitly surfaced via the event
+// message's unboundedRecommended field (recorded in step 10).
 func ApplyCapAndCooldown(in CapInput) CapOutput {
 	target := in.Recommended
-	var reason string
+	reason := in.BindingReason
 
 	switch {
 	case target > in.Current:
@@ -193,7 +221,7 @@ func ApplyCapAndCooldown(in CapInput) CapOutput {
 		} else {
 			reason = reasoning.ScaleUp
 		}
-		// Cooldown overrides step cap; zero out the patch.
+		// Cooldown overrides step cap and binding reason; zero out the patch.
 		if in.Now.Sub(in.LastScaleUp) < time.Duration(in.CooldownUp)*time.Second {
 			target = in.Current
 			reason = reasoning.CooldownHoldingUp
@@ -210,8 +238,11 @@ func ApplyCapAndCooldown(in CapInput) CapOutput {
 			reason = reasoning.CooldownHoldingDown
 		}
 	default:
+		// target == current: preserve binding reason if set, else no_change.
 		target = in.Current
-		reason = reasoning.NoChange
+		if reason == "" {
+			reason = reasoning.NoChange
+		}
 	}
 
 	return CapOutput{

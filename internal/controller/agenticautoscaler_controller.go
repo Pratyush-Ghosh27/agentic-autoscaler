@@ -214,11 +214,18 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	rpsPerPod := decision.ClampRpsPerPod(state.RpsPerPod, rpsPerPodMin, rpsPerPodMax)
 
 	// Step 5 (cont.): pre-cap recommendation.
+	// Unbounded = pre-clamp forecaster ask; recommended = post-clamp;
+	// bindingReason is the tentative step-5 reasoning token (step 6/7
+	// may overwrite it in ApplyCapAndCooldown — see design §5 precedence
+	// rules 1-4). The bindingReason local is wired into CapInput in T6.
 	minReplicas := derefOr(aas.Spec.MinReplicas, 2)
 	maxReplicas := derefOr(aas.Spec.MaxReplicas, 10)
-	recommended := decision.ComputeRecommended(forecastResp.PredictedRPS, rpsPerPod, minReplicas, maxReplicas)
+	unbounded := decision.ComputeUnboundedRecommended(forecastResp.PredictedRPS, rpsPerPod)
+	recommended, bindingReason := decision.ClampRecommended(unbounded, minReplicas, maxReplicas)
 
-	// Step 6-8: cap + cooldown + hysteresis.
+	// Step 6-8: cap + cooldown + hysteresis. BindingReason is the tentative
+	// step-5 token; ApplyCapAndCooldown overwrites it when step 6 cap or
+	// step 7 cooldown fires (design_v2.md §5 precedence rules 1-4).
 	capOut := decision.ApplyCapAndCooldown(decision.CapInput{
 		Recommended:   recommended,
 		Current:       currentReplicas,
@@ -228,6 +235,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		LastScaleUp:   state.LastScaleUpTime,
 		LastScaleDown: state.LastScaleDownTime,
 		Now:           now,
+		BindingReason: bindingReason,
 	})
 
 	// Step 9: patch /scale.
@@ -250,10 +258,22 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	// Step 10: emit Event + notify ExplainWorker.
-	r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
-		"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
-		currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+	// Step 10: emit Event + notify ExplainWorker. The unboundedRecommended
+	// field is included only when it differs from the clamped recommended
+	// value; this keeps the common-case event short while surfacing the
+	// capacity-planning signal whenever max/min binding fires. See
+	// design_v2.md §5 step 10.
+	if unbounded != recommended {
+		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
+			"current_rps=%.1f predicted_rps=%.1f current=%d target=%d "+
+				"recommended=%d unboundedRecommended=%d model=%s",
+			currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target,
+			recommended, unbounded, forecastResp.ModelUsed)
+	} else {
+		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
+			"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
+			currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+	}
 
 	// Record per-reconcile gauges + scale-events counter. Done after
 	// the decision, before status update, so a status-update failure
@@ -270,13 +290,19 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			Reason:                capOut.Reason,
 			CurrentReplicas:       currentReplicas,
 			RecommendedReplicas:   recommended,
+			UnboundedRecommended:  unbounded,
 			TargetReplicas:        capOut.Target,
+			MaxReplicas:           maxReplicas,
+			MinReplicas:           minReplicas,
 			CurrentRPS:            currentRPS,
 			PredictedRPS:          forecastResp.PredictedRPS,
 			HorizonMinutes:        forecastResp.HorizonMinutes,
 			ModelUsed:             forecastResp.ModelUsed,
 			Pattern:               classifiedPattern(&aas),
 			Confidence:            classifiedConfidence(&aas),
+			BaselineRPS:           classifiedBaselineRPS(&aas),
+			PeakP95RPS:            classifiedPeakP95RPS(&aas),
+			HourlyProfileValid:    classifiedHourlyProfileValid(&aas),
 			EffectiveCooldownUp:   effective.CooldownUp,
 			EffectiveCooldownDown: effective.CooldownDown,
 			EffectiveMaxStep:      effective.MaxStep,
@@ -288,6 +314,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	aas.Status.ConflictReason = ""
 	aas.Status.CurrentReplicas = capOut.Target
 	aas.Status.RecommendedReplicas = recommended
+	aas.Status.UnboundedRecommended = unbounded
 	aas.Status.PredictedRPS = int32(forecastResp.PredictedRPS)
 	aas.Status.RpsPerPodCurrent = int32(rpsPerPod)
 	if capOut.ShouldPatch {
@@ -491,6 +518,33 @@ func classifiedConfidence(aas *autoscalingv1alpha1.AgenticAutoscaler) string {
 		return ""
 	}
 	return aas.Status.ClassifiedParams.Confidence
+}
+
+// classifiedBaselineRPS returns the cold-path baseline if classified; else 0.
+// Zero is a valid measurement (a workload genuinely serving zero RPS) — the
+// ExplainWorker prompt template's Long-term context line surfaces it
+// unchanged. See docs/design_v2.md §6.2 (F12).
+func classifiedBaselineRPS(aas *autoscalingv1alpha1.AgenticAutoscaler) int32 {
+	if aas.Status.ClassifiedParams == nil || aas.Status.ClassifiedParams.Context == nil {
+		return 0
+	}
+	return aas.Status.ClassifiedParams.Context.BaselineRPS
+}
+
+// classifiedPeakP95RPS returns the cold-path p95 if classified; else 0.
+func classifiedPeakP95RPS(aas *autoscalingv1alpha1.AgenticAutoscaler) int32 {
+	if aas.Status.ClassifiedParams == nil || aas.Status.ClassifiedParams.Context == nil {
+		return 0
+	}
+	return aas.Status.ClassifiedParams.Context.PeakP95RPS
+}
+
+// classifiedHourlyProfileValid returns the cold-path coverage flag; else false.
+func classifiedHourlyProfileValid(aas *autoscalingv1alpha1.AgenticAutoscaler) bool {
+	if aas.Status.ClassifiedParams == nil || aas.Status.ClassifiedParams.Context == nil {
+		return false
+	}
+	return aas.Status.ClassifiedParams.Context.HourlyProfileValid
 }
 
 // durationSecondsAsInt32 expresses a Duration in seconds, clamped to the

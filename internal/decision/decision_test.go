@@ -5,6 +5,7 @@ Copyright 2026.
 package decision_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -111,37 +112,55 @@ func TestResolveEffectiveParams_EmptyStringSpecFallsThrough(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
-// ComputeRecommended — design §5 step 5
+// ComputeUnboundedRecommended + ClampRecommended — design §5 step 5
+// (the G13 split: unbounded value first, clamp + binding reason second).
 // -----------------------------------------------------------------------
 
-func TestComputeRecommended_Basic(t *testing.T) {
-	cases := []struct {
-		name      string
-		predicted float64
-		rpsPerPod float64
-		min, max  int32
-		want      int32
-	}{
-		{"exact fit", 300, 100, 1, 10, 3},
-		{"fractional ceil", 301, 100, 1, 10, 4},
-		{"clamp to min", 50, 100, 2, 10, 2},
-		{"clamp to max", 2000, 100, 1, 5, 5},
-		{"zero predicted", 0, 100, 1, 10, 1},
-		{"very low rps_per_pod", 100, 1, 1, 100, 100},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := decision.ComputeRecommended(tc.predicted, tc.rpsPerPod, tc.min, tc.max)
-			assert.Equal(t, tc.want, got)
-		})
-	}
+func TestComputeUnboundedRecommended_TrivialCases(t *testing.T) {
+	t.Run("zero rps per pod returns sentinel", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(100.0, 0.0)
+		assert.Equal(t, int32(math.MaxInt32), got,
+			"unbounded math is undefined at rpsPerPod=0; sentinel surfaces it")
+	})
+	t.Run("negative rps per pod returns sentinel", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(100.0, -1.0)
+		assert.Equal(t, int32(math.MaxInt32), got)
+	})
+	t.Run("ceiling rounds up", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(101.0, 10.0)
+		assert.Equal(t, int32(11), got)
+	})
+	t.Run("exact multiple no ceiling overshoot", func(t *testing.T) {
+		got := decision.ComputeUnboundedRecommended(100.0, 10.0)
+		assert.Equal(t, int32(10), got)
+	})
 }
 
-func TestComputeRecommended_NonPositiveRpsPerPodFailsToMax(t *testing.T) {
-	// rps_per_pod <= 0 is mathematically undefined; we fail safe by
-	// scaling out to the maximum.
-	assert.Equal(t, int32(10), decision.ComputeRecommended(500, 0, 1, 10))
-	assert.Equal(t, int32(10), decision.ComputeRecommended(500, -3, 1, 10))
+func TestClampRecommended_NoBindingWhenInsideRange(t *testing.T) {
+	clamped, reason := decision.ClampRecommended(7, 2, 10)
+	assert.Equal(t, int32(7), clamped)
+	assert.Equal(t, "", reason,
+		"in-range recommendation must not set a binding reason")
+}
+
+func TestClampRecommended_MaxBinding(t *testing.T) {
+	clamped, reason := decision.ClampRecommended(15, 2, 10)
+	assert.Equal(t, int32(10), clamped)
+	assert.Equal(t, "max_replicas_binding", reason)
+}
+
+func TestClampRecommended_MinBinding(t *testing.T) {
+	clamped, reason := decision.ClampRecommended(1, 2, 10)
+	assert.Equal(t, int32(2), clamped)
+	assert.Equal(t, "min_replicas_binding", reason)
+}
+
+func TestClampRecommended_SentinelClampsToMax(t *testing.T) {
+	// rpsPerPod=0 path: ComputeUnboundedRecommended returned math.MaxInt32;
+	// clamp must still produce a valid replica count and surface MaxBinding.
+	clamped, reason := decision.ClampRecommended(math.MaxInt32, 2, 10)
+	assert.Equal(t, int32(10), clamped)
+	assert.Equal(t, "max_replicas_binding", reason)
 }
 
 // -----------------------------------------------------------------------
@@ -249,6 +268,111 @@ func TestApplyCapAndCooldown(t *testing.T) {
 			assert.Equal(t, tc.wantPatched, out.ShouldPatch, "should patch")
 		})
 	}
+}
+
+// -----------------------------------------------------------------------
+// ApplyCapAndCooldown — G13/F27 precedence chain for BindingReason.
+// Matches design_v2.md §5 precedence rules 1-4: tentative binding reason
+// from step 5 is overwritten by step_capped_* (step 6) or
+// cooldown_holding_* (step 7), and preserved through hysteresis (step 8)
+// when no override fires.
+// -----------------------------------------------------------------------
+
+func TestApplyCapAndCooldown_BindingReasonCarriesWhenNoOverride(t *testing.T) {
+	// Workload already at maxReplicas; forecast keeps asking for more.
+	// Hysteresis fires (target == current), no step cap, no cooldown.
+	// Expected reason: max_replicas_binding (binding info is the most
+	// informative signal the operator can act on).
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   10, // clamped value
+		Current:       10,
+		MaxStep:       3,
+		CooldownUp:    60,
+		CooldownDown:  300,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MaxReplicasBinding,
+	})
+	assert.Equal(t, reasoning.MaxReplicasBinding, out.Reason)
+	assert.False(t, out.ShouldPatch, "target == current ⇒ no /scale patch")
+}
+
+func TestApplyCapAndCooldown_BindingReasonOverwrittenByStepCap(t *testing.T) {
+	// Clamped recommendation is 10; current is 5; maxStep is 2 ⇒ step cap fires.
+	// BindingReason was set tentatively in step 5; step 6 overwrites it.
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   10,
+		Current:       5,
+		MaxStep:       2,
+		CooldownUp:    0,
+		CooldownDown:  0,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MaxReplicasBinding,
+	})
+	assert.Equal(t, reasoning.StepCappedUp, out.Reason,
+		"step 6 must overwrite binding reason when cap clips the move")
+	assert.Equal(t, int32(7), out.Target)
+	assert.True(t, out.ShouldPatch)
+}
+
+func TestApplyCapAndCooldown_BindingReasonOverwrittenByCooldown(t *testing.T) {
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   10,
+		Current:       5,
+		MaxStep:       10,
+		CooldownUp:    300,
+		CooldownDown:  0,
+		LastScaleUp:   now.Add(-10 * time.Second), // still in cooldown
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MaxReplicasBinding,
+	})
+	assert.Equal(t, reasoning.CooldownHoldingUp, out.Reason,
+		"step 7 cooldown must overwrite binding reason")
+	assert.Equal(t, int32(5), out.Target)
+	assert.False(t, out.ShouldPatch)
+}
+
+func TestApplyCapAndCooldown_MinBindingOnHysteresis(t *testing.T) {
+	// Workload already at minReplicas; forecast keeps asking for fewer.
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   2,
+		Current:       2,
+		MaxStep:       3,
+		CooldownUp:    60,
+		CooldownDown:  300,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: reasoning.MinReplicasBinding,
+	})
+	assert.Equal(t, reasoning.MinReplicasBinding, out.Reason)
+	assert.False(t, out.ShouldPatch)
+}
+
+func TestApplyCapAndCooldown_EmptyBindingReasonGoesToNoChange(t *testing.T) {
+	// Regression-pin the existing no_change semantics for the non-binding case.
+	now := time.Now()
+	out := decision.ApplyCapAndCooldown(decision.CapInput{
+		Recommended:   5,
+		Current:       5,
+		MaxStep:       3,
+		CooldownUp:    0,
+		CooldownDown:  0,
+		LastScaleUp:   now.Add(-time.Hour),
+		LastScaleDown: now.Add(-time.Hour),
+		Now:           now,
+		BindingReason: "",
+	})
+	assert.Equal(t, reasoning.NoChange, out.Reason)
+	assert.False(t, out.ShouldPatch)
 }
 
 // -----------------------------------------------------------------------

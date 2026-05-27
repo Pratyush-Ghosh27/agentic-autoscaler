@@ -18,6 +18,8 @@ import (
 
 // baseRequest returns a fully-populated ExplainRequest representing a
 // "happy path" scale_up. Tests mutate fields to exercise conditionals.
+// G18 fields are set to realistic non-zero values so the kitchen-sink
+// Long-term context line renders meaningful numbers in every test.
 func baseRequest() controller.ExplainRequest {
 	return controller.ExplainRequest{
 		Namespace:             "demo",
@@ -25,13 +27,19 @@ func baseRequest() controller.ExplainRequest {
 		Reason:                reasoning.ScaleUp,
 		CurrentReplicas:       4,
 		RecommendedReplicas:   6,
+		UnboundedRecommended:  6,
 		TargetReplicas:        6,
+		MaxReplicas:           10,
+		MinReplicas:           2,
 		CurrentRPS:            800.5,
 		PredictedRPS:          1200.3,
 		HorizonMinutes:        10,
 		ModelUsed:             "prophet",
 		Pattern:               "periodic",
 		Confidence:            "high",
+		BaselineRPS:           400,
+		PeakP95RPS:            1200,
+		HourlyProfileValid:    true,
 		EffectiveCooldownUp:   60,
 		EffectiveCooldownDown: 300,
 		EffectiveMaxStep:      3,
@@ -100,6 +108,59 @@ func TestBuildPrompt_IncludesPatternWhenFlat(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
+// Long-term context line — F12 gate is Pattern != "" (NOT != "default").
+// -----------------------------------------------------------------------
+
+func TestBuildPrompt_IncludesLongTermContextWhenPatternSet(t *testing.T) {
+	req := baseRequest()
+	req.BaselineRPS = 400
+	req.PeakP95RPS = 1200
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user, "Long-term context: baseline 400 rps, p95 1200 rps")
+}
+
+func TestBuildPrompt_IncludesLongTermContextWhenPatternIsDefault(t *testing.T) {
+	// F12: classifier *has* run (Pattern="default"); baseline/p95 are real.
+	// The Traffic-pattern line is still suppressed (Pattern == "default"
+	// case), but the Long-term context line must render.
+	req := baseRequest()
+	req.Pattern = "default"
+	req.BaselineRPS = 50
+	req.PeakP95RPS = 200
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user, "Long-term context: baseline 50 rps, p95 200 rps")
+	assert.NotContains(t, user, "Traffic pattern: default",
+		"Traffic-pattern line is still gated on Pattern != \"default\"")
+}
+
+func TestBuildPrompt_OmitsLongTermContextWhenPatternEmpty(t *testing.T) {
+	req := baseRequest()
+	req.Pattern = ""
+	req.BaselineRPS = 400
+	req.PeakP95RPS = 1200
+	_, user := explainer.BuildPrompt(req)
+	assert.NotContains(t, user, "Long-term context:")
+}
+
+func TestBuildPrompt_LongTermContextWithZeroValues(t *testing.T) {
+	// F12 rationale: a workload with genuinely zero traffic must still
+	// have the line rendered (zero is a measurement, not absence).
+	req := baseRequest()
+	req.Pattern = "flat"
+	req.BaselineRPS = 0
+	req.PeakP95RPS = 0
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user, "Long-term context: baseline 0 rps, p95 0 rps")
+}
+
+func TestBuildPrompt_ClosingWordingMentionsLongTermBaseline(t *testing.T) {
+	_, user := explainer.BuildPrompt(baseRequest())
+	assert.Contains(t, user,
+		"Explain why this decision was made and what the traffic data suggests "+
+			"relative to the workload's long-term baseline.")
+}
+
+// -----------------------------------------------------------------------
 // Conditional: clipped line.
 // -----------------------------------------------------------------------
 
@@ -139,6 +200,110 @@ func TestBuildPrompt_NoClippedLineForCooldownReason(t *testing.T) {
 	_, user := explainer.BuildPrompt(req)
 	assert.NotContains(t, user, "limited by maxStep",
 		"cooldown is not a step cap")
+}
+
+// -----------------------------------------------------------------------
+// Binding lines — F33 prompt conditionals.
+// -----------------------------------------------------------------------
+
+func TestBuildPrompt_IncludesMaxBindingLine(t *testing.T) {
+	req := baseRequest()
+	req.Reason = reasoning.MaxReplicasBinding
+	req.UnboundedRecommended = 25
+	req.RecommendedReplicas = 10
+	req.TargetReplicas = 10
+	req.MaxReplicas = 10
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user,
+		"This scale was limited by maxReplicas: the forecast asked for 25 replicas but the CRD bound capped it at maxReplicas=10. Raise spec.maxReplicas to let the autoscaler scale further.")
+	assert.NotContains(t, user, "limited by maxStep",
+		"max_replicas_binding and step_capped_* are mutually exclusive")
+}
+
+func TestBuildPrompt_OmitsMaxBindingLineWhenOtherReason(t *testing.T) {
+	req := baseRequest() // Reason = scale_up
+	_, user := explainer.BuildPrompt(req)
+	assert.NotContains(t, user, "limited by maxReplicas")
+}
+
+func TestBuildPrompt_IncludesMinBindingLine(t *testing.T) {
+	req := baseRequest()
+	req.Reason = reasoning.MinReplicasBinding
+	req.UnboundedRecommended = 1
+	req.RecommendedReplicas = 2
+	req.TargetReplicas = 2
+	req.MinReplicas = 2
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user,
+		"This scale was limited by minReplicas: the forecast asked for only 1 replicas but the CRD bound floored it at minReplicas=2.")
+}
+
+func TestBuildPrompt_OmitsMinBindingLineWhenMaxBinding(t *testing.T) {
+	req := baseRequest()
+	req.Reason = reasoning.MaxReplicasBinding
+	req.UnboundedRecommended = 25
+	req.MaxReplicas = 10
+	_, user := explainer.BuildPrompt(req)
+	assert.NotContains(t, user, "limited by minReplicas",
+		"min_replicas_binding and max_replicas_binding are mutually exclusive")
+}
+
+// -----------------------------------------------------------------------
+// Kitchen-sink — full Plan 15 prompt for MaxReplicasBinding.
+// -----------------------------------------------------------------------
+
+// TestBuildPrompt_MaxReplicasBindingFullPrompt asserts every expected line
+// of the prompt when a max_replicas_binding event fires with full context.
+// This is the integration-level pin for the G18 / F12 / F33 surface — if
+// any conditional regresses, this test points directly at the missing line.
+func TestBuildPrompt_MaxReplicasBindingFullPrompt(t *testing.T) {
+	req := controller.ExplainRequest{
+		Namespace:             "demo",
+		Name:                  "app-agentic",
+		Reason:                reasoning.MaxReplicasBinding,
+		CurrentReplicas:       3,
+		RecommendedReplicas:   3,
+		UnboundedRecommended:  25,
+		TargetReplicas:        3,
+		MaxReplicas:           3,
+		MinReplicas:           1,
+		CurrentRPS:            800.5,
+		PredictedRPS:          2400.0,
+		HorizonMinutes:        10,
+		ModelUsed:             "prophet",
+		Pattern:               "periodic",
+		Confidence:            "high",
+		BaselineRPS:           400,
+		PeakP95RPS:            1500,
+		HourlyProfileValid:    true,
+		EffectiveCooldownUp:   60,
+		EffectiveCooldownDown: 300,
+		EffectiveMaxStep:      3,
+	}
+
+	_, user := explainer.BuildPrompt(req)
+
+	// All eight expected lines appear (order is preserved by the builder,
+	// but the assertions are substring-based so a future reorder doesn't
+	// break the test gratuitously).
+	expected := []string{
+		"Traffic pattern: periodic (confidence: high)",
+		"Long-term context: baseline 400 rps, p95 1500 rps",
+		"Current RPS: 800.5, Predicted RPS (10 min ahead): 2400.0",
+		"Scaling: 3 → 3 replicas (max_replicas_binding)",
+		"This scale was limited by maxReplicas: the forecast asked for 25 replicas but the CRD bound capped it at maxReplicas=3. Raise spec.maxReplicas to let the autoscaler scale further.",
+		"Forecasting model: prophet",
+		"Active parameters: scaleUpCooldown=60s, scaleDownCooldown=300s, maxStep=3",
+		"Explain why this decision was made and what the traffic data suggests relative to the workload's long-term baseline.",
+	}
+
+	for _, line := range expected {
+		assert.Contains(t, user, line, "missing prompt line: %q", line)
+	}
+	assert.NotContains(t, user, "limited by maxStep",
+		"max_replicas_binding is mutually exclusive with step_capped_*")
+	assert.NotContains(t, user, "limited by minReplicas",
+		"max_replicas_binding is mutually exclusive with min_replicas_binding")
 }
 
 // -----------------------------------------------------------------------

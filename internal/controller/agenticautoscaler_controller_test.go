@@ -30,6 +30,7 @@ import (
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/config"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/controller"
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/decision"
+	"github.com/pratyush-ghosh/agentic-autoscaler/internal/reasoning"
 )
 
 // -----------------------------------------------------------------------
@@ -880,3 +881,155 @@ var _ = Describe("AgenticAutoscalerReconciler reclassify annotation", func() {
 })
 
 func ptrInt32(v int32) *int32 { return &v }
+
+// -----------------------------------------------------------------------
+// G13 — UnboundedRecommended + MaxReplicasBinding end-to-end (Plan 15 T14)
+// -----------------------------------------------------------------------
+
+var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
+	const ns = "rec-g13-binding"
+	ctx := context.Background()
+
+	BeforeEach(func() {
+		ensureNamespace(ctx, ns)
+	})
+
+	It("persists UnboundedRecommended into status and emits MaxReplicasBinding event when forecast exceeds maxReplicas", func() {
+		const dep = "bind-deploy"
+		const cr = "bind-cr"
+		// Deployment is *already at* maxReplicas (10), so the workload sits
+		// at the cap and the forecast can't push it any higher. This is the
+		// canonical "binding without replica change" scenario from
+		// design_v2.md §5 precedence rule 4.
+		makeDeployment(ctx, ns, dep, 10)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// First-reconcile rps_per_pod math: gate fires (no prior scale time),
+		// observation = currentRPS/currentReplicas = 500/10 = 50. Ring-buffer
+		// median = 50 → ClampRpsPerPod(50, 50, 500) = 50.
+		// unbounded = ceil(4000 / 50) = 80 (>> maxReplicas=10).
+		// Expected: unboundedRecommended=80, recommendedReplicas=10,
+		// target=10, no patch, reason=MaxReplicasBinding.
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 4000, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		got := fetch(ctx, ns, cr)
+		Expect(got.Status.UnboundedRecommended).To(Equal(int32(80)),
+			"status.unboundedRecommended is the raw forecaster ask, pre-clamp")
+		Expect(got.Status.RecommendedReplicas).To(Equal(int32(10)),
+			"status.recommendedReplicas is post-clamp (= maxReplicas)")
+		Expect(got.Status.CurrentReplicas).To(Equal(int32(10)),
+			"workload stays at the cap; no replica change")
+
+		// Deployment replica count must not change.
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(10)))
+
+		// ExplainWorker must NOT be notified per design_v2.md §6.2 line 885
+		// ("Binding without replica change exclusion").
+		Expect(ex.callCount()).To(Equal(0),
+			"max_replicas_binding without replica change must not trigger ExplainWorker")
+
+		// K8s Event still fires for diagnostic visibility, with the
+		// MaxReplicasBinding reason and unboundedRecommended=80 in the message.
+		Eventually(fakeRec.Events).Should(Receive(
+			SatisfyAll(
+				ContainSubstring(reasoning.MaxReplicasBinding),
+				ContainSubstring("unboundedRecommended=80"),
+				ContainSubstring("recommended=10"),
+			)))
+	})
+
+	It("includes unboundedRecommended in event message when step cap also fires", func() {
+		const dep = "bind-stepcap-deploy"
+		const cr = "bind-stepcap-cr"
+		// Deployment at 2, maxReplicas=10, maxStep=2 — step cap will clip
+		// the move. Binding reason gets overwritten by step_capped_up per
+		// design §5 precedence rule 2, but unboundedRecommended is still
+		// in the event message because unbounded != recommended.
+		makeDeployment(ctx, ns, dep, 2)
+		two := int32(2)
+		makeAAS(ctx, ns, cr, dep, func(a *autoscalingv1alpha1.AgenticAutoscaler) {
+			a.Spec.MaxStepSize = &two
+		})
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// First-reconcile rps_per_pod math: observation = 500/2 = 250.
+		// ClampRpsPerPod(250, 50, 500) = 250.
+		// unbounded = ceil(4000 / 250) = 16 (> maxReplicas=10).
+		// Recommended clamped to 10; step cap clips target to current(2)+maxStep(2)=4.
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 4000, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		got := fetch(ctx, ns, cr)
+		Expect(got.Status.UnboundedRecommended).To(Equal(int32(16)))
+		Expect(got.Status.RecommendedReplicas).To(Equal(int32(10)))
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(4)),
+			"step cap clips the patch to current+maxStep=4")
+
+		// ExplainWorker IS notified — replicas changed.
+		Expect(ex.callCount()).To(Equal(1))
+		Expect(ex.last().Reason).To(Equal(reasoning.StepCappedUp),
+			"step 6 cap overwrites binding reason when target moves")
+		Expect(ex.last().UnboundedRecommended).To(Equal(int32(16)),
+			"ExplainRequest carries the unbounded value for the prompt's capacity-planning prose")
+
+		Eventually(fakeRec.Events).Should(Receive(
+			SatisfyAll(
+				ContainSubstring(reasoning.StepCappedUp),
+				ContainSubstring("unboundedRecommended=16"),
+			)))
+	})
+
+	It("omits unboundedRecommended from event message when it equals recommended", func() {
+		const dep = "no-bind-deploy"
+		const cr = "no-bind-cr"
+		makeDeployment(ctx, ns, dep, 2)
+		makeAAS(ctx, ns, cr, dep)
+		DeferCleanup(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.AgenticAutoscaler{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: cr}})
+			_ = k8sClient.Delete(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: dep}})
+		})
+
+		// predicted=1000 / 275 = 4 — well inside [2, 10]; no binding.
+		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
+		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1000, ModelUsed: "linear_extrap"}}
+		ex := &fakeExplainNotifier{}
+		r := newReconciler(prom, fc, ex)
+		fakeRec := r.EventRecorder.(*record.FakeRecorder)
+
+		_, err := reconcileFor(ctx, r, ns, cr)
+		Expect(err).NotTo(HaveOccurred())
+
+		got := fetch(ctx, ns, cr)
+		Expect(got.Status.UnboundedRecommended).To(Equal(int32(4)))
+		Expect(got.Status.RecommendedReplicas).To(Equal(int32(4)))
+
+		// Event message must NOT include "unboundedRecommended=" when it
+		// equals recommended (the common case — keeps events short).
+		Eventually(fakeRec.Events).Should(Receive(
+			SatisfyAll(
+				ContainSubstring(reasoning.ScaleUp),
+				Not(ContainSubstring("unboundedRecommended=")),
+				Not(ContainSubstring("recommended=4")),
+			)))
+	})
+})

@@ -17,8 +17,18 @@ const (
 	// Hot-path reconciler — replica-blocking.
 	CooldownHoldingUp   = "cooldown_holding_up"
 	CooldownHoldingDown = "cooldown_holding_down"
-	KillSwitched        = "kill_switched"
-	ConflictDetected    = "conflict_detected"
+
+	// Hot-path reconciler — CRD-bound binding constraints. Tentatively set
+	// in decision.ClampRecommended (step 5); may be overwritten by step 6
+	// (step_capped_*) or step 7 (cooldown_holding_*) per design_v2.md §5
+	// precedence rules 1-4. When carried through to step 10, signals that
+	// the CRD's [minReplicas, maxReplicas] bounds are the binding constraint
+	// — the operator should treat this as a capacity-planning signal.
+	MaxReplicasBinding = "max_replicas_binding"
+	MinReplicasBinding = "min_replicas_binding"
+
+	KillSwitched     = "kill_switched"
+	ConflictDetected = "conflict_detected"
 
 	// Hot-path reconciler — failure paths.
 	ForecastUnavailable = "forecast_unavailable"
@@ -48,6 +58,8 @@ func AllTokens() map[string]string {
 		"StepCappedDown":      StepCappedDown,
 		"CooldownHoldingUp":   CooldownHoldingUp,
 		"CooldownHoldingDown": CooldownHoldingDown,
+		"MaxReplicasBinding":  MaxReplicasBinding,
+		"MinReplicasBinding":  MinReplicasBinding,
 		"KillSwitched":        KillSwitched,
 		"ConflictDetected":    ConflictDetected,
 		"ForecastUnavailable": ForecastUnavailable,

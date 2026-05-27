@@ -298,6 +298,15 @@ spec:
                   Persisted for restart recovery (see docs/design.md §5).
                 format: int32
                 type: integer
+              unboundedRecommended:
+                description: |-
+                  UnboundedRecommended is the raw forecaster-driven replica count, pre-clamp.
+                  When this exceeds Spec.MaxReplicas the CRD bound is the binding constraint;
+                  when it is below Spec.MinReplicas the floor is binding. Equals
+                  RecommendedReplicas in the common case. See docs/design_v2.md §5 step 5
+                  and §6.2 "Field provenance" for the capacity-planning intent.
+                format: int32
+                type: integer
             type: object
         type: object
     served: true

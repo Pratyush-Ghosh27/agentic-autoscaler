@@ -83,6 +83,12 @@ func BuildPrompt(req controller.ExplainRequest) (system, user string) {
 			req.UnboundedRecommended, req.MaxReplicas)
 	}
 
+	if req.Reason == reasoning.MinReplicasBinding {
+		fmt.Fprintf(&b,
+			"This scale was limited by minReplicas: the forecast asked for only %d replicas but the CRD bound floored it at minReplicas=%d.\n",
+			req.UnboundedRecommended, req.MinReplicas)
+	}
+
 	fmt.Fprintf(&b, "Forecasting model: %s\n", req.ModelUsed)
 	fmt.Fprintf(&b,
 		"Active parameters: scaleUpCooldown=%ds, scaleDownCooldown=%ds, maxStep=%d\n",

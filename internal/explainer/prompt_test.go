@@ -226,6 +226,28 @@ func TestBuildPrompt_OmitsMaxBindingLineWhenOtherReason(t *testing.T) {
 	assert.NotContains(t, user, "limited by maxReplicas")
 }
 
+func TestBuildPrompt_IncludesMinBindingLine(t *testing.T) {
+	req := baseRequest()
+	req.Reason = reasoning.MinReplicasBinding
+	req.UnboundedRecommended = 1
+	req.RecommendedReplicas = 2
+	req.TargetReplicas = 2
+	req.MinReplicas = 2
+	_, user := explainer.BuildPrompt(req)
+	assert.Contains(t, user,
+		"This scale was limited by minReplicas: the forecast asked for only 1 replicas but the CRD bound floored it at minReplicas=2.")
+}
+
+func TestBuildPrompt_OmitsMinBindingLineWhenMaxBinding(t *testing.T) {
+	req := baseRequest()
+	req.Reason = reasoning.MaxReplicasBinding
+	req.UnboundedRecommended = 25
+	req.MaxReplicas = 10
+	_, user := explainer.BuildPrompt(req)
+	assert.NotContains(t, user, "limited by minReplicas",
+		"min_replicas_binding and max_replicas_binding are mutually exclusive")
+}
+
 // -----------------------------------------------------------------------
 // TrimContent.
 // -----------------------------------------------------------------------

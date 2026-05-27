@@ -38,6 +38,7 @@ This matrix is the input for the Phase 6 banner flip (E11). It is not regenerate
 | 23 | `CLASSIFIER_MIN_POINTS` defaults to 72; floor derives from `L+10` | `internal/config/config_test.go` (defaults + validation tests) | Phase 2 (G21) |
 | 24 | All v2 env vars parseable on the right deployment | `internal/config/config_test.go` + `forecast-service/tests/unit/test_app.py` (env-parsing tests) | Phase 2 (G21) |
 | 25 | Code constant is `KPeriodicDown` (no `KTodDown`) | `internal/classifier/params_test.go` (rename verification test) | Phase 3 (G19/F13) |
+| 25b | Code field is `Features.HourlyAutocorr` (no `Features.TodCorrelation`); helper is `hourlyAutocorr`; threshold constant is `hourlyAutocorrAbove` | `internal/classifier/{features,classify,params,pipeline}.go` + `{features,classify,params}_test.go` (refactor lands the field-level rename deferred from Phase 3) | Post-Phase-6 (F13 follow-up) |
 | 26 | `auto`-mode never returns `gbdt_quantile` (any history/classifier/context) | `forecast-service/tests/unit/test_dispatch.py` (F22 invariant test — same coverage as #8) | Phase 3 (G12/G19/F22) |
 
 ---

@@ -22,7 +22,7 @@ const (
 // them.
 const (
 	cvFlatBelow            = 0.10
-	tdCorrelationAbove     = 0.70
+	hourlyAutocorrAbove    = 0.70
 	cvSpikyAbove           = 0.50
 	peakToTroughSpikyAbove = 5.0
 
@@ -59,7 +59,7 @@ func ClassifyWithMean(f Features, seriesMean float64) string {
 	switch {
 	case f.CV < cvFlatBelow:
 		return PatternFlat
-	case f.TodCorrelation > tdCorrelationAbove:
+	case f.HourlyAutocorr > hourlyAutocorrAbove:
 		return PatternPeriodic
 	case f.CV > cvSpikyAbove && f.PeakToTrough > peakToTroughSpikyAbove:
 		return PatternSpiky

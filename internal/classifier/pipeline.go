@@ -139,12 +139,12 @@ func RunPipelineV2(
 	// Use the raw rps/sample slope to detrend — that is what the
 	// autocorrelation expects.
 	rawSlope := trendSlope(series)
-	todCorr := todCorrelation(detrend(series, rawSlope), lag, MinTodOverlap)
+	hourlyCorr := hourlyAutocorr(detrend(series, rawSlope), lag, MinTodOverlap)
 
 	f := Features{
 		CV:             cv,
 		PeakToTrough:   peakToTrough,
-		TodCorrelation: todCorr,
+		HourlyAutocorr: hourlyCorr,
 		TrendSlope:     slopeRpsPerMin,
 	}
 	pattern := ClassifyWithMean(f, m)

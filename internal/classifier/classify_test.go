@@ -32,34 +32,34 @@ func TestClassify_PriorityOrder(t *testing.T) {
 	}{
 		{
 			"flat wins at low cv even with high slope",
-			classifier.Features{CV: 0.05, TodCorrelation: 0.8, PeakToTrough: 6, TrendSlope: 3},
+			classifier.Features{CV: 0.05, HourlyAutocorr: 0.8, PeakToTrough: 6, TrendSlope: 3},
 			classifier.PatternFlat,
 		},
 		{
 			"periodic wins over spiky regardless of slope",
-			classifier.Features{CV: 0.60, TodCorrelation: 0.75, PeakToTrough: 6, TrendSlope: 0},
+			classifier.Features{CV: 0.60, HourlyAutocorr: 0.75, PeakToTrough: 6, TrendSlope: 0},
 			classifier.PatternPeriodic,
 		},
 		{
 			"spiky needs cv>0.50 AND pt>5 (zero slope so ramp does not pre-empt)",
-			classifier.Features{CV: 0.60, TodCorrelation: 0.3, PeakToTrough: 6, TrendSlope: 0},
+			classifier.Features{CV: 0.60, HourlyAutocorr: 0.3, PeakToTrough: 6, TrendSlope: 0},
 			classifier.PatternSpiky,
 		},
 		{
 			"gradual_ramp on positive slope",
-			classifier.Features{CV: 0.20, TodCorrelation: 0.3, PeakToTrough: 2, TrendSlope: 3.0},
+			classifier.Features{CV: 0.20, HourlyAutocorr: 0.3, PeakToTrough: 2, TrendSlope: 3.0},
 			classifier.PatternGradualRamp,
 		},
 		{
 			"gradual_ramp on negative slope",
-			classifier.Features{CV: 0.20, TodCorrelation: 0.3, PeakToTrough: 2, TrendSlope: -2.5},
+			classifier.Features{CV: 0.20, HourlyAutocorr: 0.3, PeakToTrough: 2, TrendSlope: -2.5},
 			classifier.PatternGradualRamp,
 		},
 		{
 			// At mean=1.0 the daily-drift fraction is |slope|*1440;
 			// to stay in `default` the slope must be below ≈1.4e-4.
 			"default fallthrough requires near-zero slope at mean=1",
-			classifier.Features{CV: 0.20, TodCorrelation: 0.3, PeakToTrough: 2, TrendSlope: 1e-5},
+			classifier.Features{CV: 0.20, HourlyAutocorr: 0.3, PeakToTrough: 2, TrendSlope: 1e-5},
 			classifier.PatternDefault,
 		},
 	}
@@ -92,17 +92,17 @@ func TestClassify_Boundaries(t *testing.T) {
 		},
 		{
 			"tod exactly 0.70 is NOT periodic",
-			classifier.Features{CV: 0.15, TodCorrelation: 0.70},
+			classifier.Features{CV: 0.15, HourlyAutocorr: 0.70},
 			classifier.PatternDefault,
 		},
 		{
 			"tod just above 0.70 IS periodic",
-			classifier.Features{CV: 0.15, TodCorrelation: 0.701},
+			classifier.Features{CV: 0.15, HourlyAutocorr: 0.701},
 			classifier.PatternPeriodic,
 		},
 		{
 			"spiky needs both cv>0.50 AND pt>5",
-			classifier.Features{CV: 0.51, PeakToTrough: 4.9, TodCorrelation: 0.1},
+			classifier.Features{CV: 0.51, PeakToTrough: 4.9, HourlyAutocorr: 0.1},
 			classifier.PatternDefault,
 		},
 		{
@@ -110,12 +110,12 @@ func TestClassify_Boundaries(t *testing.T) {
 			// so even tiny slopes fire the ramp rule. Below the boundary
 			// (|slope| ≤ 0.20/1440 ≈ 1.388e-4) we stay in `default`.
 			"slope just at the relative-threshold boundary stays default",
-			classifier.Features{CV: 0.15, TodCorrelation: 0.1, PeakToTrough: 2, TrendSlope: 1.388e-4},
+			classifier.Features{CV: 0.15, HourlyAutocorr: 0.1, PeakToTrough: 2, TrendSlope: 1.388e-4},
 			classifier.PatternDefault,
 		},
 		{
 			"slope just above the relative-threshold boundary IS ramp",
-			classifier.Features{CV: 0.15, TodCorrelation: 0.1, PeakToTrough: 2, TrendSlope: 1.4e-4},
+			classifier.Features{CV: 0.15, HourlyAutocorr: 0.1, PeakToTrough: 2, TrendSlope: 1.4e-4},
 			classifier.PatternGradualRamp,
 		},
 		{
@@ -182,7 +182,7 @@ func mean(s []float64) float64 {
 // mean over 24 hours is `gradual_ramp`. At mean=100 with slope=0.015
 // the daily drift is 0.015*1440/100 = 0.216 > 0.20 → ramp.
 func TestClassifyWithMean_GradualRampRelativeThreshold(t *testing.T) {
-	f := classifier.Features{CV: 0.30, PeakToTrough: 2.0, TodCorrelation: 0.20, TrendSlope: 0.015}
+	f := classifier.Features{CV: 0.30, PeakToTrough: 2.0, HourlyAutocorr: 0.20, TrendSlope: 0.015}
 	got := classifier.ClassifyWithMean(f, 100.0)
 	assert.Equal(t, classifier.PatternGradualRamp, got,
 		"daily drift = 0.015*1440/100 = 0.216 > 0.20 should fire ramp")
@@ -200,7 +200,7 @@ func TestClassifyWithMean_GradualRampRelativeThreshold(t *testing.T) {
 //
 //	mean=10000, slope=0.5 → 0.5*1440/10000 = 0.072 < 0.20 → default.
 func TestClassifyWithMean_HighMeanWidensTolerance(t *testing.T) {
-	f := classifier.Features{CV: 0.20, PeakToTrough: 2.0, TodCorrelation: 0.20, TrendSlope: 0.5}
+	f := classifier.Features{CV: 0.20, PeakToTrough: 2.0, HourlyAutocorr: 0.20, TrendSlope: 0.5}
 	got := classifier.ClassifyWithMean(f, 10000.0)
 	assert.Equal(t, classifier.PatternDefault, got,
 		"daily drift 0.072 must NOT fire ramp at mean=10k under v2 rule")
@@ -210,7 +210,7 @@ func TestClassifyWithMean_HighMeanWidensTolerance(t *testing.T) {
 // relative threshold uses |slope| so falling traffic also classifies
 // as ramp when the magnitude exceeds the threshold.
 func TestClassifyWithMean_NegativeSlopeAlsoFires(t *testing.T) {
-	f := classifier.Features{CV: 0.30, PeakToTrough: 2.0, TodCorrelation: 0.20, TrendSlope: -0.020}
+	f := classifier.Features{CV: 0.30, PeakToTrough: 2.0, HourlyAutocorr: 0.20, TrendSlope: -0.020}
 	got := classifier.ClassifyWithMean(f, 100.0)
 	assert.Equal(t, classifier.PatternGradualRamp, got)
 }

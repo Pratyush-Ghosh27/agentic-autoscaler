@@ -6,8 +6,8 @@ package classifier
 
 import "math"
 
-// Parameter formula constants from design §7. These names match the
-// table in the design doc 1:1; do not rename.
+// Parameter formula constants from design_v2.md §7. These names match
+// the table in the design doc 1:1; do not rename.
 const (
 	BaseScaleUpCooldown        = 120.0
 	KCVUp                      = 2.0
@@ -54,7 +54,8 @@ type ClassifiedOutput struct {
 //
 //	scaleUpCooldown   = clamp(round(BASE_UP / (1 + K_CV_UP*cv)), floor, ceiling)
 //	scaleDownCooldown = clamp(round(BASE_DOWN * (1 + K_CV_DOWN*cv)
-//	                          / (1 + K_PERIODIC_DOWN*max(0, tod))), floor, ceiling)
+//	                          / (1 + K_PERIODIC_DOWN*max(0, hourly_autocorr))),
+//	                          floor, ceiling)
 //	maxStep           = clamp(ceil(log2(peak_to_trough)), 1, max-min)
 //	preferredForecaster = pattern -> forecaster table (G19, see below).
 //
@@ -69,8 +70,8 @@ type ClassifiedOutput struct {
 // bound maxStep so that a single reconcile cannot cross the entire range.
 //
 // Breaking change in Phase 3: the legacy v1 feature-driven selector
-// (`prophet when tod>0.70 OR |trend|>2.0`) is gone. Pattern is the
-// single source of truth so the controller, the worker, and the
+// (`prophet when hourly_autocorr>0.70 OR |trend|>2.0`) is gone. Pattern
+// is the single source of truth so the controller, the worker, and the
 // Forecast Service all see the same routing decision.
 func ComputeParams(
 	f Features,
@@ -81,8 +82,8 @@ func ComputeParams(
 	scaleUp := clampInt32(int32(math.Round(rawUp)),
 		ScaleUpCooldownHardFloor, ScaleUpCooldownHardCeiling)
 
-	todFactor := math.Max(0, f.TodCorrelation)
-	rawDown := BaseScaleDownCooldown * (1 + KCVDown*f.CV) / (1 + KPeriodicDown*todFactor)
+	hourlyFactor := math.Max(0, f.HourlyAutocorr)
+	rawDown := BaseScaleDownCooldown * (1 + KCVDown*f.CV) / (1 + KPeriodicDown*hourlyFactor)
 	scaleDown := clampInt32(int32(math.Round(rawDown)),
 		ScaleDownCooldownHardFloor, ScaleDownCooldownHardCeiling)
 

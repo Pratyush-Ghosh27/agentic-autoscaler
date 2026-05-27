@@ -18,7 +18,7 @@ from forecast.prophet_model import forecast_prophet
 if TYPE_CHECKING:
     from forecast.models import ContextPayload
 
-ModelName = Literal["prophet", "linear_extrap"]
+ModelName = Literal["prophet", "linear_extrap", "gbdt_quantile"]
 
 
 class RecommendResult(TypedDict):

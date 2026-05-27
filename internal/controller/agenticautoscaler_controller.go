@@ -134,7 +134,9 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	currentRPS, err := r.PromQuerier.InstantQuery(ctx, promql.InstantRPS(deployName))
 	if err != nil {
 		log.Error(err, "prometheus instant query failed")
-		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, err.Error())
+		r.EventRecorder.Event(&aas, corev1.EventTypeWarning,
+			reasoning.PascalReason(reasoning.MetricsUnavailable),
+			reasoning.MetricsUnavailable+": "+err.Error())
 		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
@@ -144,13 +146,17 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	samples, err := r.PromQuerier.RangeQuery(ctx, promql.RangeRPS(deployName), historyStart, historyEnd, time.Minute)
 	if err != nil {
 		log.Error(err, "prometheus range query failed")
-		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, err.Error())
+		r.EventRecorder.Event(&aas, corev1.EventTypeWarning,
+			reasoning.PascalReason(reasoning.MetricsUnavailable),
+			reasoning.MetricsUnavailable+": "+err.Error())
 		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
 	if len(samples) < int(r.Config.HotPathMinPoints) {
 		msg := fmt.Sprintf("only %d range samples (need %d)", len(samples), r.Config.HotPathMinPoints)
-		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.MetricsUnavailable, msg)
+		r.EventRecorder.Event(&aas, corev1.EventTypeWarning,
+			reasoning.PascalReason(reasoning.MetricsUnavailable),
+			reasoning.MetricsUnavailable+": "+msg)
 		observeMetricsUnavailable(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
@@ -173,7 +179,9 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	})
 	if err != nil {
 		log.Error(err, "forecast service call failed")
-		r.EventRecorder.Event(&aas, corev1.EventTypeWarning, reasoning.ForecastUnavailable, err.Error())
+		r.EventRecorder.Event(&aas, corev1.EventTypeWarning,
+			reasoning.PascalReason(reasoning.ForecastUnavailable),
+			reasoning.ForecastUnavailable+": "+err.Error())
 		observeForecastFailure(aas.Namespace, aas.Name)
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
@@ -270,16 +278,21 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// value; this keeps the common-case event short while surfacing the
 	// capacity-planning signal whenever max/min binding fires. See
 	// design_v2.md §5 step 10.
+	//
+	// G22/F39: K8s Event Reason is PascalCase (kubectl convention); the
+	// snake_case token is prepended to the message body so log searches
+	// keyed on the canonical token still match.
+	pascalReason := reasoning.PascalReason(capOut.Reason)
 	if unbounded != recommended {
-		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
-			"current_rps=%.1f predicted_rps=%.1f current=%d target=%d "+
+		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, pascalReason,
+			"%s current_rps=%.1f predicted_rps=%.1f current=%d target=%d "+
 				"recommended=%d unboundedRecommended=%d model=%s",
-			currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target,
+			capOut.Reason, currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target,
 			recommended, unbounded, forecastResp.ModelUsed)
 	} else {
-		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
-			"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
-			currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, pascalReason,
+			"%s current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
+			capOut.Reason, currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
 	}
 
 	// Record per-reconcile gauges + scale-events counter. Done after
@@ -346,8 +359,9 @@ func (r *AgenticAutoscalerReconciler) handleKillSwitch(ctx context.Context, aas 
 		if err := r.Status().Update(ctx, aas); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.EventRecorder.Event(aas, corev1.EventTypeWarning, reasoning.KillSwitched,
-			"kill-switch annotation present; controller paused")
+		r.EventRecorder.Event(aas, corev1.EventTypeWarning,
+			reasoning.PascalReason(reasoning.KillSwitched),
+			reasoning.KillSwitched+": kill-switch annotation present; controller paused")
 	}
 	return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 }
@@ -381,7 +395,9 @@ func (r *AgenticAutoscalerReconciler) handleConflict(ctx context.Context, aas *a
 		if err := r.Status().Update(ctx, aas); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.EventRecorder.Event(aas, corev1.EventTypeWarning, reasoning.ConflictDetected, reason)
+		r.EventRecorder.Event(aas, corev1.EventTypeWarning,
+			reasoning.PascalReason(reasoning.ConflictDetected),
+			reasoning.ConflictDetected+": "+reason)
 	}
 	return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 }

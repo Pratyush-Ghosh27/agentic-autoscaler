@@ -573,11 +573,14 @@ var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
 		got.Status.RpsPerPodCurrent = 275
 		Expect(k8sClient.Status().Update(ctx, got)).To(Succeed())
 
-		// On the first reconcile the rps_per_pod ring buffer hasn't been
-		// seeded yet, so the steady-state gate fires and pushes its first
-		// observation = currentRPS / currentReplicas = 500 / 2 = 250.
-		// recommended = ceil(predictedRPS / rps_per_pod) = ceil(1100 / 250) = 5.
-		// Step cap MaxStep=4 doesn't bind (|5-2|=3 ≤ 4), so target=5.
+		// On the first reconcile the persisted RpsPerPodCurrent=275 is
+		// in-bounds and seeds the ring buffer with 5 copies (F20). The
+		// steady-state gate then pushes its first observation =
+		// currentRPS / currentReplicas = 500 / 2 = 250. Buffer:
+		// [275,275,275,275,275,250]. Sorted: [250,275,275,275,275,275].
+		// Median(6) = (sorted[2] + sorted[3]) / 2 = (275 + 275) / 2 = 275.
+		// recommended = ceil(predictedRPS / rps_per_pod) = ceil(1100 / 275) = 4.
+		// Step cap MaxStep=4 doesn't bind (|4-2|=2 ≤ 4), so target=4.
 		prom := &fakePromQuerier{instantVal: 500, rangeVal: rangeSamples(20, 500)}
 		fc := &fakeForecaster{resp: forecast.RecommendResponse{PredictedRPS: 1100, ModelUsed: "linear_extrap"}}
 		ex := &fakeExplainNotifier{}
@@ -587,7 +590,12 @@ var _ = Describe("AgenticAutoscalerReconciler cold-restart cooldown", func() {
 		_, err := reconcileFor(ctx, r, ns, cr)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(5)),
+		// Replicas moved from 2 to 4 — scale-up happened despite the
+		// 10-minute-old persisted LastScaleTime, proving the cooldown
+		// gate did not fire spuriously. The exact target (4 vs 5) is a
+		// consequence of F20's 5-copy seed preserving the persisted
+		// rps_per_pod estimate of 275 in the post-restart median.
+		Expect(*fetchDeploy(ctx, ns, dep).Spec.Replicas).To(Equal(int32(4)),
 			"old LastScaleTime must not falsely gate fresh scale-up decisions")
 		Eventually(fakeRec.Events).Should(Receive(ContainSubstring("scale_up")))
 	})
@@ -1144,10 +1152,13 @@ var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
 			"max_replicas_binding without replica change must not trigger ExplainWorker")
 
 		// K8s Event still fires for diagnostic visibility, with the
-		// MaxReplicasBinding reason and unboundedRecommended=80 in the message.
+		// MaxReplicasBinding reason (PascalCase per F39) and the
+		// snake_case max_replicas_binding token verbatim in the message
+		// body for log searchability. unboundedRecommended=80 also in body.
 		Eventually(fakeRec.Events).Should(Receive(
 			SatisfyAll(
-				ContainSubstring(reasoning.MaxReplicasBinding),
+				ContainSubstring("MaxReplicasBinding"),               // PascalCase Reason
+				ContainSubstring(reasoning.MaxReplicasBinding),       // snake_case in body
 				ContainSubstring("unboundedRecommended=80"),
 				ContainSubstring("recommended=10"),
 			)))
@@ -1198,7 +1209,8 @@ var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
 
 		Eventually(fakeRec.Events).Should(Receive(
 			SatisfyAll(
-				ContainSubstring(reasoning.StepCappedUp),
+				ContainSubstring("StepCappedUp"),                // PascalCase Reason
+				ContainSubstring(reasoning.StepCappedUp),        // snake_case in body
 				ContainSubstring("unboundedRecommended=16"),
 			)))
 	})
@@ -1229,9 +1241,12 @@ var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
 
 		// Event message must NOT include "unboundedRecommended=" when it
 		// equals recommended (the common case — keeps events short).
+		// PascalCase Reason "ScaleUp" must appear; the snake_case
+		// "scale_up" prefix is in the body for log searchability.
 		Eventually(fakeRec.Events).Should(Receive(
 			SatisfyAll(
-				ContainSubstring(reasoning.ScaleUp),
+				ContainSubstring("ScaleUp"),                  // PascalCase Reason
+				ContainSubstring(reasoning.ScaleUp),          // snake_case in body
 				Not(ContainSubstring("unboundedRecommended=")),
 				Not(ContainSubstring("recommended=4")),
 			)))

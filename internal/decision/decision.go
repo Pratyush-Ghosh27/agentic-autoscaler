@@ -322,16 +322,27 @@ type StatusSeed struct {
 	LastScaleTime time.Time
 }
 
+// RestartSeedCopies is the number of ring-buffer copies used when
+// reseeding from persisted status on controller restart. Five copies
+// (vs. one) keep the operator's runtime calibration dominant in the
+// median across the next 5+ observations — without this, the persisted
+// value is washed out by the second new sample and a misguided scale
+// decision can fire on a wobbly median during the post-restart window.
+// See design_v2.md F20.
+const RestartSeedCopies = 5
+
 // InitializeFromStatus seeds a PerCRState from the CR's persisted status.
 // When the persisted rpsPerPodCurrent is in-bounds and non-zero, we seed
-// the ring buffer with one observation so the controller doesn't have to
-// rebuild the median from scratch. Otherwise we accept the midpoint as a
-// neutral starting estimate but leave the ring buffer empty (the next
-// in-window observation will populate it).
+// the ring buffer with RestartSeedCopies copies (F20) so the controller
+// doesn't have to rebuild the median from scratch and the persisted
+// estimate dominates the median through the next several observations.
+// Otherwise we accept the midpoint as a neutral starting estimate but
+// leave the ring buffer empty (the next in-window observation will
+// populate it).
 func InitializeFromStatus(state *PerCRState, seed StatusSeed) {
 	if seed.InBounds && seed.RpsPerPodCurrent > 0 {
 		state.RpsPerPod = seed.RpsPerPodCurrent
-		state.Observations.Seed(seed.RpsPerPodCurrent)
+		state.Observations.SeedN(seed.RpsPerPodCurrent, RestartSeedCopies)
 	} else {
 		state.RpsPerPod = seed.Midpoint
 	}

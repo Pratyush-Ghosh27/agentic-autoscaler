@@ -42,10 +42,31 @@ func (rb *RingBuffer) Push(v float64) {
 	rb.data = append(rb.data, v)
 }
 
-// Seed replaces the buffer's contents with a single observation. Used during
-// restart recovery when we have one persisted value to reseed from.
+// Seed replaces the buffer's contents with a single observation.
+// Equivalent to SeedN(v, 1). Prefer SeedN for restart recovery — F20
+// requires a 5-copy seed so the persisted rps_per_pod estimate
+// dominates the median across the next several observations.
 func (rb *RingBuffer) Seed(v float64) {
-	rb.data = append(rb.data[:0], v)
+	rb.SeedN(v, 1)
+}
+
+// SeedN replaces the buffer's contents with n copies of v. Used during
+// restart recovery to preserve the persisted rps_per_pod estimate
+// across the next n observations (design_v2.md F20: 5-copy seed). If n
+// exceeds the buffer's capacity, only `cap` copies are stored. n <= 0
+// clears the buffer.
+func (rb *RingBuffer) SeedN(v float64, n int) {
+	rb.data = rb.data[:0]
+	count := n
+	if count < 0 {
+		count = 0
+	}
+	if count > rb.cap {
+		count = rb.cap
+	}
+	for i := 0; i < count; i++ {
+		rb.data = append(rb.data, v)
+	}
 }
 
 // Values returns the underlying slice in insertion order. Callers MUST NOT

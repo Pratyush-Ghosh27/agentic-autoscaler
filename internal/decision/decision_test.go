@@ -479,9 +479,28 @@ func TestInitializeState_FromStatus(t *testing.T) {
 	})
 	assert.True(t, state.Initialized)
 	assert.InDelta(t, 175.0, state.RpsPerPod, 0.001)
-	assert.Len(t, state.Observations.Values(), 1)
+	assert.Len(t, state.Observations.Values(), 5,
+		"F20: restart recovery seeds 5 copies to preserve the estimate")
 	assert.Equal(t, lastScale, state.LastScaleUpTime)
 	assert.Equal(t, lastScale, state.LastScaleDownTime)
+}
+
+// TestInitializeState_FromStatus_PreservesMedianAcrossNewObservations is
+// the F20 behavioural pin at the InitializeFromStatus level: after
+// restart recovery seeds the persisted value, four fresh observations of
+// a different value must NOT wash it out. Median of nine entries
+// (5 seeded + 4 fresh) lands on the persisted value.
+func TestInitializeState_FromStatus_PreservesMedianAcrossNewObservations(t *testing.T) {
+	state := &decision.PerCRState{Observations: decision.NewRingBuffer(10)}
+	decision.InitializeFromStatus(state, decision.StatusSeed{
+		RpsPerPodCurrent: 175,
+		InBounds:         true,
+	})
+	for i := 0; i < 4; i++ {
+		state.Observations.Push(250)
+	}
+	assert.InDelta(t, 175.0, state.Observations.Median(), 0.001,
+		"4 fresh observations of 250 must NOT wash out the persisted seed of 175")
 }
 
 func TestInitializeState_Midpoint(t *testing.T) {

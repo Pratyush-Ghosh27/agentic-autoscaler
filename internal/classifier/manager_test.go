@@ -89,7 +89,7 @@ func TestManager_SignalReclassifyOnUnknownKeyIsNoOp(t *testing.T) {
 	mgr.SignalReclassify(types.NamespacedName{Namespace: "demo", Name: "absent"})
 }
 
-func TestManager_ObserveDeploymentGeneration_FirstObservationDoesNotSignal(t *testing.T) {
+func TestManager_ObserveDeploymentRevision_FirstObservationDoesNotSignal(t *testing.T) {
 	cr := newSampleCR()
 	prom := &fakeProm{}
 	mgr, cancel := newManager(t, cr, prom)
@@ -98,13 +98,13 @@ func TestManager_ObserveDeploymentGeneration_FirstObservationDoesNotSignal(t *te
 	mgr.Ensure(cr)
 	key := types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}
 
-	// First observation just records the generation; the worker's
+	// First observation just records the revision; the worker's
 	// own immediate-first-run trigger has already classified.
-	signalled := mgr.ObserveDeploymentGeneration(key, 1)
+	signalled := mgr.ObserveDeploymentRevision(key, "1")
 	assert.False(t, signalled)
 }
 
-func TestManager_ObserveDeploymentGeneration_SameGenerationDoesNotSignal(t *testing.T) {
+func TestManager_ObserveDeploymentRevision_SameRevisionDoesNotSignal(t *testing.T) {
 	cr := newSampleCR()
 	prom := &fakeProm{}
 	mgr, cancel := newManager(t, cr, prom)
@@ -113,12 +113,12 @@ func TestManager_ObserveDeploymentGeneration_SameGenerationDoesNotSignal(t *test
 	mgr.Ensure(cr)
 	key := types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}
 
-	require.False(t, mgr.ObserveDeploymentGeneration(key, 5))
-	assert.False(t, mgr.ObserveDeploymentGeneration(key, 5))
-	assert.False(t, mgr.ObserveDeploymentGeneration(key, 5))
+	require.False(t, mgr.ObserveDeploymentRevision(key, "5"))
+	assert.False(t, mgr.ObserveDeploymentRevision(key, "5"))
+	assert.False(t, mgr.ObserveDeploymentRevision(key, "5"))
 }
 
-func TestManager_ObserveDeploymentGeneration_ChangeSignalsOnce(t *testing.T) {
+func TestManager_ObserveDeploymentRevision_ChangeSignalsOnce(t *testing.T) {
 	cr := newSampleCR()
 	prom := &fakeProm{}
 	mgr, cancel := newManager(t, cr, prom)
@@ -128,24 +128,77 @@ func TestManager_ObserveDeploymentGeneration_ChangeSignalsOnce(t *testing.T) {
 	key := types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}
 
 	// Seed.
-	require.False(t, mgr.ObserveDeploymentGeneration(key, 1))
+	require.False(t, mgr.ObserveDeploymentRevision(key, "1"))
 	// Change.
-	assert.True(t, mgr.ObserveDeploymentGeneration(key, 2))
+	assert.True(t, mgr.ObserveDeploymentRevision(key, "2"))
 	// Same again.
-	assert.False(t, mgr.ObserveDeploymentGeneration(key, 2))
+	assert.False(t, mgr.ObserveDeploymentRevision(key, "2"))
 	// Change again.
-	assert.True(t, mgr.ObserveDeploymentGeneration(key, 3))
+	assert.True(t, mgr.ObserveDeploymentRevision(key, "3"))
 }
 
-func TestManager_ObserveDeploymentGeneration_UnknownKeyIsNoOp(t *testing.T) {
+func TestManager_ObserveDeploymentRevision_UnknownKeyIsNoOp(t *testing.T) {
 	cr := newSampleCR()
 	prom := &fakeProm{}
 	mgr, cancel := newManager(t, cr, prom)
 	defer cancel()
 
-	signalled := mgr.ObserveDeploymentGeneration(
-		types.NamespacedName{Namespace: "demo", Name: "absent"}, 7)
+	signalled := mgr.ObserveDeploymentRevision(
+		types.NamespacedName{Namespace: "demo", Name: "absent"}, "7")
 	assert.False(t, signalled)
+}
+
+// TestManager_ObserveDeploymentRevision_EmptyRevisionRecordsButDoesNotSignal
+// pins the empty-string-on-first-observation branch. Empty is the legitimate
+// initial state when the Deployment controller hasn't bumped the
+// `deployment.kubernetes.io/revision` annotation yet (e.g., envtest where
+// no Deployment controller runs).
+func TestManager_ObserveDeploymentRevision_EmptyRevisionRecordsButDoesNotSignal(t *testing.T) {
+	cr := newSampleCR()
+	prom := &fakeProm{}
+	mgr, cancel := newManager(t, cr, prom)
+	defer cancel()
+
+	mgr.Ensure(cr)
+	key := types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}
+
+	// First observation: empty string (annotation not yet set).
+	signalled := mgr.ObserveDeploymentRevision(key, "")
+	assert.False(t, signalled, "first observation — record only, no signal")
+
+	// Subsequent same-empty: no signal.
+	signalled = mgr.ObserveDeploymentRevision(key, "")
+	assert.False(t, signalled)
+
+	// Empty → non-empty is a real revision change (rollout occurred).
+	signalled = mgr.ObserveDeploymentRevision(key, "1")
+	assert.True(t, signalled, "empty→non-empty is a revision change")
+}
+
+// TestManager_LastDeploymentRevision_ReportsLastObserved is the test
+// hook used by the controller envtest to verify the reconciler is
+// reading the revision annotation (not the generation field).
+func TestManager_LastDeploymentRevision_ReportsLastObserved(t *testing.T) {
+	cr := newSampleCR()
+	prom := &fakeProm{}
+	mgr, cancel := newManager(t, cr, prom)
+	defer cancel()
+
+	mgr.Ensure(cr)
+	key := types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}
+
+	assert.Equal(t, "", mgr.LastDeploymentRevision(key),
+		"no observations yet — empty string")
+
+	mgr.ObserveDeploymentRevision(key, "1")
+	assert.Equal(t, "1", mgr.LastDeploymentRevision(key))
+
+	mgr.ObserveDeploymentRevision(key, "2")
+	assert.Equal(t, "2", mgr.LastDeploymentRevision(key))
+
+	// Unknown key → empty string.
+	assert.Equal(t, "",
+		mgr.LastDeploymentRevision(types.NamespacedName{Namespace: "x", Name: "y"}))
 }
 
 func TestManager_RootCtxCancelStopsAllWorkers(t *testing.T) {
@@ -161,6 +214,6 @@ func TestManager_RootCtxCancelStopsAllWorkers(t *testing.T) {
 	// HasWorker reports the map state, not goroutine liveness — but
 	// after cancel, calls into the manager must remain safe.
 	mgr.SignalReclassify(key)
-	mgr.ObserveDeploymentGeneration(key, 99)
+	mgr.ObserveDeploymentRevision(key, "99")
 	mgr.Stop(key)
 }

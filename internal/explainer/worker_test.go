@@ -134,10 +134,13 @@ func TestWorker_HappyPath_CallsOllamaAndEmitsEvent(t *testing.T) {
 	require.Eventually(t, func() bool { return fake.CallCount() == 1 },
 		800*time.Millisecond, 10*time.Millisecond)
 
+	// Per F39, the Reason field is PascalCase ("ScaleExplained") and the
+	// snake_case token is in the message body.
 	require.Eventually(t, func() bool {
 		select {
 		case e := <-rec.Events:
-			return strings.Contains(e, reasoning.ScaleExplained) &&
+			return strings.Contains(e, "ScaleExplained") &&
+				strings.Contains(e, reasoning.ScaleExplained) &&
 				strings.Contains(e, "scaling up")
 		default:
 			return false

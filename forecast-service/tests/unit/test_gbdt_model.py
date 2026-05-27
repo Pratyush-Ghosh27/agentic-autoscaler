@@ -106,3 +106,51 @@ def test_gbdt_respects_hourly_profile_baseline() -> None:
     assert predicted > 50.0 or math.isclose(predicted, 50.0, abs_tol=5.0), (
         f"predicted={predicted} — hour_baseline feature appears ignored"
     )
+
+
+@pytest.mark.slow
+def test_gbdt_caps_prediction_at_peak_p95_times_three() -> None:
+    """T11 (G12): outputs are clamped at ``peak_p95_rps * 3`` to bound
+    the blast radius from an over-confident quantile estimate.
+
+    Build a 60-pt history that ramps from 100 to 690 with
+    peak_p95_rps=100 — deliberately low so the cap bites. The
+    unclamped quantile prediction lands well above 300 because the
+    recent trend is steep; the clamp forces the output to <= 300.
+    """
+    history = [float(100 + i * 10) for i in range(60)]
+    ctx = ContextPayload(
+        baseline_rps=200,
+        peak_p95_rps=100,
+        trend_24h_slope=0.0,
+        hourly_profile=[200] * 24,
+        hourly_profile_valid=True,
+        current_hour_utc=12,
+        current_minute_utc=0,
+    )
+    predicted = forecast_gbdt_quantile(history, horizon_minutes=10, context=ctx)
+    assert predicted <= 300.0 + 1e-6, (
+        f"predicted={predicted} exceeds peak_p95_rps*3=300 cap"
+    )
+
+
+@pytest.mark.slow
+def test_gbdt_skips_cap_when_peak_p95_is_zero() -> None:
+    """T11 (G12): a fresh deployment with no observed traffic has
+    ``peak_p95_rps=0`` — applying the cap would force every
+    prediction to 0. Instead the cap is disabled in that case and
+    the caller gets the model's raw output (still clipped at 0)."""
+    history = [float(100 + i * 10) for i in range(60)]
+    ctx = ContextPayload(
+        baseline_rps=0,
+        peak_p95_rps=0,
+        trend_24h_slope=0.0,
+        hourly_profile=[0] * 24,
+        hourly_profile_valid=False,
+        current_hour_utc=12,
+        current_minute_utc=0,
+    )
+    predicted = forecast_gbdt_quantile(history, horizon_minutes=10, context=ctx)
+    assert predicted > 0.0, (
+        "expected a positive prediction; cap should be disabled when p95==0"
+    )

@@ -111,10 +111,12 @@ def forecast_gbdt_quantile(
         anchor_hour = 0
         anchor_minute = 0
         hourly_profile: list[int] = [0] * 24
+        peak_p95 = 0
     else:
         anchor_hour = context.current_hour_utc
         anchor_minute = context.current_minute_utc
         hourly_profile = list(context.hourly_profile)
+        peak_p95 = int(context.peak_p95_rps)
 
     n = len(rps_history)
     lag = GBDT_LAG_DEPTH
@@ -190,4 +192,9 @@ def forecast_gbdt_quantile(
     )
     predicted = float(model.predict(pred_row)[0])
 
-    return max(0.0, predicted)  # T11 lands the upper safety cap.
+    # G12 safety cap. peak_p95 == 0 means "no observed traffic yet"
+    # (cold start or skip-context), in which case the cap collapses to
+    # +inf and the lower clamp at 0 is the only floor — otherwise a
+    # fresh deployment would always get pinned to 0.
+    upper = float(peak_p95) * 3.0 if peak_p95 > 0 else float("inf")
+    return max(0.0, min(predicted, upper))

@@ -49,6 +49,7 @@ This guide is read-once-during-upgrade; for steady-state reference, read `docs/d
 | Re-classification trigger watches `deployment.kubernetes.io/revision` annotation (was `metadata.generation`) | `/scale` patches no longer fire spurious re-classifications. Only real rollouts (image / env / command edits) trigger re-classification. |
 | Webhook rejects `maxReplicas == minReplicas` (was: only `<`) | Pinning replicas via `min == max` is now rejected at admission. The `maxStepSize` formula's clamp range `[1, maxReplicas - minReplicas]` is no longer empty. |
 | New annotation: `autoscaling.agentic.io/skip-context: "true"` | When set, reconciler omits `context` from `/recommend` (forces context-free behaviour). Useful for ad-hoc testing. Persists until cleared. |
+| New Forecast Service metric: `forecast_dispatch_total{model_used}` | Cumulative count of successful `/recommend` dispatches, labelled by the **resolved** model (post-fallback). A `prophet → linear_extrap` fallback increments under `linear_extrap`, not `prophet`. Useful for Grafana panels and alerts that need to know which forecaster is actually serving traffic. The nightly E2E asserts on `model_used="gbdt_quantile" > 0` after a `preferredForecaster: gbdt_quantile` patch (Plan 18 — see `test/e2e/assertions-gbdt.sh`). |
 
 ## Upgrade procedure
 
@@ -67,6 +68,13 @@ This guide is read-once-during-upgrade; for steady-state reference, read `docs/d
    - Within `CLASSIFIER_INTERVAL_MINUTES` (default 30 min), each existing CR's ClassifierWorker fires on its periodic timer and writes `status.classifiedParams.context`. Watch for `pattern_classified` events confirming the cycle ran.
    - Verify `kubectl get aas <name> -o json | jq .status.classifiedParams.context` returns all 5 fields.
    - If you want immediate context population after upgrade, set `autoscaling.agentic.io/reclassify: "true"` on each CR — this triggers an immediate classification cycle. The controller removes the annotation after a successful run.
+
+4. **Update Grafana / kubectl greps for PascalCase**
+   - Any custom Grafana panel or kubectl-event grep that filters on `Reason` (e.g. `kube_event_count{reason="scale_up"}`) needs to be updated to PascalCase (`reason="ScaleUp"`). The full mapping is implemented in [`internal/reasoning/tokens.go`](../internal/reasoning/tokens.go) (`PascalReason`) and pinned by `internal/reasoning/tokens_test.go::TestPascalReason_AllTokensHaveMapping`.
+   - The snake_case form remains in the **message body** for log searchability — `kubectl get events -o yaml | grep scale_up` still works, but `--field-selector reason=scale_up` does not.
+
+5. **Optional: scrape the new `forecast_dispatch_total` metric**
+   - If you operate the Forecast Service, add `forecast_dispatch_total` (5 cardinality: `prophet`, `linear_extrap`, `gbdt_quantile`, plus the metric itself) to your Prometheus dashboards. The nightly E2E asserts on it (Plan 18); operators may want to alert on `rate(forecast_dispatch_total{model_used="prophet"}[10m]) == 0` over long windows as a forecast-service-down signal.
 
 ## Rollback
 

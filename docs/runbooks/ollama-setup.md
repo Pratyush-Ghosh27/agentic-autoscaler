@@ -1,9 +1,11 @@
 # Ollama Setup Runbook
 
-The ExplainWorker (design §6.2) calls Ollama via the OpenAI-compatible
+The ExplainWorker ([`design_v2.md`](../design_v2.md) §6.2) calls Ollama via the OpenAI-compatible
 `/v1/chat/completions` endpoint to generate plain-English scaling
 explanations. Ollama is **optional** — without it, the controller still
 scales correctly; only the `ScaleExplained` Events go silent.
+
+> **v2 note:** the prompt template was extended in v2 / Plan 15 / F33 with conditional lines for `max_replicas_binding` / `min_replicas_binding` reasoning tokens (so the LLM sees `unboundedRecommended` and the binding CRD bound directly, instead of generating misleading "scaled up to handle load" prose at the cap). Without this, the worker would actively hide capacity-planning signals from the operator. If you're running a custom prompt template, mirror the conditionals in [`internal/explainer/prompt.go`](../../internal/explainer/prompt.go).
 
 ## Install
 

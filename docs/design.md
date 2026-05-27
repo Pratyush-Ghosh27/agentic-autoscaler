@@ -1,7 +1,15 @@
-# Agentic Autoscaler — Design Spec
+# Agentic Autoscaler — Design Spec (v1 — SUPERSEDED)
 
 **Date:** 2026-05-21
-**Status:** Draft for team review
+**Status:** Superseded by [`docs/design_v2.md`](design_v2.md) (Approved 2026-05-27)
+
+> **⚠️ This is the v1 spec, kept for historical reference only.**
+>
+> The current authoritative design is [`docs/design_v2.md`](design_v2.md). All operator-facing decisions (env-var defaults, CRD enums, K8s Event reasoning tokens, forecaster selection rules, classifier thresholds) should be checked against v2, not this file. v2 is a strict superset of v1 — every API addition is backward-compatible — but several env-var defaults and behaviours moved.
+>
+> If you are upgrading from v1 to v2, read [`docs/migrating-v1-to-v2.md`](migrating-v1-to-v2.md) first.
+>
+> The v1 → v2 audit trail lives in [`docs/v2_revision notes.md`](v2_revision%20notes.md) and [`docs/gap-report-v2.md`](gap-report-v2.md). Acceptance-criteria coverage matrix: [`docs/v2-acceptance-coverage.md`](v2-acceptance-coverage.md).
 
 ---
 

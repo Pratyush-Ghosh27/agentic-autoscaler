@@ -11,8 +11,11 @@ A side-by-side HPA-managed comparison target is deployed alongside every
 *before* the load arrives, the HPA reacts *after*") is verifiable on a
 nightly schedule.
 
-> Full design: [`docs/design.md`](docs/design.md). Implementation
-> strategy: [`docs/superpowers/specs/2026-05-24-agentic-autoscaler-implementation-strategy.md`](docs/superpowers/specs/2026-05-24-agentic-autoscaler-implementation-strategy.md).
+> **Current design (Approved 2026-05-27):** [`docs/design_v2.md`](docs/design_v2.md). v2 closed all v1 design gaps and added a third forecaster (`gbdt_quantile`), a 5-field `context` block flowing from cold-path classifier → hot-path forecasts, PascalCase K8s Event reasons, and two new reasoning tokens (`max_replicas_binding` / `min_replicas_binding`).
+>
+> **Upgrading from v1?** Read [`docs/migrating-v1-to-v2.md`](docs/migrating-v1-to-v2.md) — every change is additive at the API level, but several env-var defaults moved.
+>
+> **Historical references:** v1 spec [`docs/design.md`](docs/design.md) (superseded by v2). v1 implementation strategy [`docs/superpowers/specs/2026-05-24-agentic-autoscaler-implementation-strategy.md`](docs/superpowers/specs/2026-05-24-agentic-autoscaler-implementation-strategy.md). v2 implementation strategy [`docs/superpowers/specs/2026-05-26-v2-implementation-strategy.md`](docs/superpowers/specs/2026-05-26-v2-implementation-strategy.md).
 
 ## Architecture at a glance
 
@@ -41,8 +44,10 @@ Three workers run inside the controller process:
 
 Plus the in-cluster pieces: a target-app (Go) emitting
 `http_requests_total` / `_request_duration_seconds_bucket`; the
-Forecast Service (Python/FastAPI) running Prophet or linear extrapolation;
-a 7-panel Grafana dashboard for the agentic-vs-HPA comparison.
+Forecast Service (Python/FastAPI) running **Prophet, linear extrapolation,
+or LightGBM quantile regression** (the v2 `gbdt_quantile` forecaster, opt-in
+via `spec.preferredForecaster`); a 7-panel Grafana dashboard for the
+agentic-vs-HPA comparison.
 
 ## Quick start (local kind)
 
@@ -69,14 +74,15 @@ The controller binary requires:
 - `PROMETHEUS_URL` — Prometheus endpoint
 
 Everything else has documented defaults in
-[`docs/design.md`](docs/design.md) §4. Notable knobs:
+[`docs/design_v2.md`](docs/design_v2.md) §4. Notable knobs:
 
 | Env var                            | Default                      | Purpose                                       |
 | ---------------------------------- | ---------------------------- | --------------------------------------------- |
 | `RECONCILE_INTERVAL_SECONDS`       | `60`                         | Hot path cadence                              |
-| `FORECAST_HORIZON_MINUTES`         | `10`                         | How far ahead the forecast looks              |
+| `FORECAST_HORIZON_MINUTES`         | `10`                         | How far ahead the forecast looks (Forecast Service-only in v2) |
 | `CLASSIFIER_INTERVAL_MINUTES`      | `30`                         | Cold path cadence                             |
-| `CLASSIFIER_MIN_POINTS`            | `70`                         | Required history before classification        |
+| `CLASSIFIER_MIN_POINTS`            | `72`                         | Required history before classification (v2: raised from 70 — see migration guide) |
+| `CONTEXT_DOWNSAMPLE_RESOLUTION_MIN`| `5`                          | Cold-path Prometheus query resolution (v2)    |
 | `OLLAMA_URL`                       | `http://localhost:11434`     | Ollama OpenAI-compat endpoint                 |
 | `OLLAMA_MODEL`                     | `llama3.2`                   | LLM name (use `phi3` for CI/small machines)   |
 
@@ -98,7 +104,7 @@ internal/adapters/
   prometheus/                Prom HTTP client
   forecast/                  Forecast service client
   ollama/                    Ollama OpenAI-compat client
-forecast-service/            Python FastAPI service (Prophet + linear_extrap)
+forecast-service/            Python FastAPI service (Prophet + linear_extrap + gbdt_quantile)
 target-app/                  Synthetic Go target with /work, /healthz, /metrics
 hack/synthetic/              Deterministic test-data generator
 testdata/                    Golden RPS fixtures (committed)
@@ -139,8 +145,12 @@ Lifecycle / Scenarios / Smoke + E2E / Observability / Tooling*.
   generate-check, test-go, test-python, test-envtest, build-images,
   smoke. Target time <10 min.
 - **Nightly E2E** (`.github/workflows/nightly-e2e.yml`) — full kind
-  cluster + helm + ollama + 25 min k6 ramp + Prometheus quantitative
-  assertions. 60 min budget. Failure artifacts uploaded for inspection.
+  cluster + helm + 25 min k6 ramp + Prometheus quantitative assertions
+  (p99 + 5xx tolerance), then a 20 min k6 spiky run with the agentic CR
+  patched to `preferredForecaster: gbdt_quantile` followed by a
+  `forecast_dispatch_total{model_used="gbdt_quantile"} > 0` assertion
+  (Plan 18 lock-in for the gbdt path). 90 min budget. Failure artifacts
+  uploaded for inspection. See [`docs/runbooks/nightly-e2e.md`](docs/runbooks/nightly-e2e.md).
 
 The PR CI's coverage gate is enforced on:
 
@@ -153,6 +163,7 @@ The PR CI's coverage gate is enforced on:
 
 Start at the runbook closest to the problem:
 
+- Upgrading from v1 — [`docs/migrating-v1-to-v2.md`](docs/migrating-v1-to-v2.md)
 - Cluster up but pods stuck — [`docs/runbooks/kind-bootstrap.md`](docs/runbooks/kind-bootstrap.md)
 - ScaleExplained Events missing — [`docs/runbooks/ollama-setup.md`](docs/runbooks/ollama-setup.md)
 - Nightly regression alarm — [`docs/runbooks/nightly-e2e.md`](docs/runbooks/nightly-e2e.md)
@@ -160,5 +171,6 @@ Start at the runbook closest to the problem:
 
 For controller-internal questions, every reasoning-token Event the
 controller emits is enumerated in
-[`internal/reasoning/tokens.go`](internal/reasoning/tokens.go) and tied
-back to a section of `docs/design.md`.
+[`internal/reasoning/tokens.go`](internal/reasoning/tokens.go) (with the
+`PascalReason` mapping for the K8s Event `Reason` field) and tied back to
+a section of `docs/design_v2.md`.

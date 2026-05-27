@@ -258,10 +258,22 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	// Step 10: emit Event + notify ExplainWorker.
-	r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
-		"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
-		currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+	// Step 10: emit Event + notify ExplainWorker. The unboundedRecommended
+	// field is included only when it differs from the clamped recommended
+	// value; this keeps the common-case event short while surfacing the
+	// capacity-planning signal whenever max/min binding fires. See
+	// design_v2.md §5 step 10.
+	if unbounded != recommended {
+		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
+			"current_rps=%.1f predicted_rps=%.1f current=%d target=%d "+
+				"recommended=%d unboundedRecommended=%d model=%s",
+			currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target,
+			recommended, unbounded, forecastResp.ModelUsed)
+	} else {
+		r.EventRecorder.Eventf(&aas, corev1.EventTypeNormal, capOut.Reason,
+			"current_rps=%.1f predicted_rps=%.1f current=%d target=%d model=%s",
+			currentRPS, forecastResp.PredictedRPS, currentReplicas, capOut.Target, forecastResp.ModelUsed)
+	}
 
 	// Record per-reconcile gauges + scale-events counter. Done after
 	// the decision, before status update, so a status-update failure

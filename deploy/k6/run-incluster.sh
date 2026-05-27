@@ -115,15 +115,48 @@ kubectl wait --for=condition=Ready pod \
 echo "==> streaming k6 logs"
 kubectl logs -n "$NS" -l "job-name=${JOB_NAME}" -f --tail=-1 || true
 
-# Wait for the Job to finalise. `condition=complete` returns 0 only
-# on success; we explicitly check for failure separately so the script
-# exits non-zero on a k6 failure.
+# Poll for either Complete or Failed. We deliberately do NOT use a
+# single `kubectl wait --for=condition=complete --timeout=$TIMEOUT`
+# call: when k6 exits non-zero (e.g., ramp.js trips the
+# `http_req_failed: rate<0.05` threshold) the Job transitions to
+# condition=Failed and condition=Complete never becomes True, so the
+# wait blocks for the full TIMEOUT. Combined with the workflow's
+# `timeout-minutes`, the runner gets cancelled before either the
+# failure-artifact step or the next k6 scenario can run — which is
+# exactly the failure mode the 7 cancelled nightly runs surfaced.
+#
+# Polling `.status.{succeeded,failed}` (incremented by the Job
+# controller; `backoffLimit: 0` in deploy/k6/job.yaml means the first
+# Pod failure flips status.failed=1 immediately) lets us short-circuit
+# on either terminal state in seconds, so:
+#   - a passing k6 returns within one poll interval of Pod termination;
+#   - a failing k6 returns the same way and propagates exit 1, which
+#     trips the workflow's `if: failure()` artifact-collection step;
+#   - a genuinely hung Pod still hits the TIMEOUT ceiling and exits 1,
+#     identical to the previous behaviour.
 echo "==> waiting for Job/${JOB_NAME} to finish (timeout ${TIMEOUT})"
-if ! kubectl wait --for=condition=complete --timeout="$TIMEOUT" \
-        "job/${JOB_NAME}" -n "$NS"; then
-    echo "k6 ${SCENARIO} did not complete successfully" >&2
-    kubectl describe "job/${JOB_NAME}" -n "$NS" | tail -30
-    exit 1
-fi
-
-echo "==> k6 ${SCENARIO} done"
+# TIMEOUT is a Go-style duration but every in-tree caller uses the
+# `<seconds>s` form. Strip the trailing `s` so we can do arithmetic;
+# any non-numeric remainder will fail loudly via the `(( ... ))`
+# evaluation below rather than silently misbehave.
+TIMEOUT_SECONDS="${TIMEOUT%s}"
+DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
+while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    SUCCEEDED="$(kubectl get "job/${JOB_NAME}" -n "$NS" \
+        -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")"
+    FAILED="$(kubectl get "job/${JOB_NAME}" -n "$NS" \
+        -o jsonpath='{.status.failed}' 2>/dev/null || echo "")"
+    if [ "$SUCCEEDED" = "1" ]; then
+        echo "==> k6 ${SCENARIO} done"
+        exit 0
+    fi
+    if [ "$FAILED" = "1" ]; then
+        echo "k6 ${SCENARIO} failed (Job/${JOB_NAME} .status.failed=1)" >&2
+        kubectl describe "job/${JOB_NAME}" -n "$NS" | tail -30
+        exit 1
+    fi
+    sleep 5
+done
+echo "k6 ${SCENARIO} did not reach a terminal state within ${TIMEOUT}" >&2
+kubectl describe "job/${JOB_NAME}" -n "$NS" | tail -30
+exit 1

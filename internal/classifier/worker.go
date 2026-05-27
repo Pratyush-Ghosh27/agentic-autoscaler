@@ -361,6 +361,10 @@ func (w *Worker) removeReclassifyAnnotation(ctx context.Context, logger logr.Log
 // via controller logs + metrics, not via Events, to keep the apiserver
 // event budget bounded on noisy clusters). If a future caller needs a
 // Warning event, reintroduce the parameter then.
+//
+// G22/F39: K8s Event Reason is PascalCase (kubectl convention); the
+// snake_case token is prepended to the message body so log searches
+// keyed on the canonical token still match.
 func (w *Worker) emitEvent(ctx context.Context, reason, message string) {
 	if w.EventRecorder == nil {
 		return
@@ -369,7 +373,8 @@ func (w *Worker) emitEvent(ctx context.Context, reason, message string) {
 	if err := w.Client.Get(ctx, w.Key, &aas); err != nil {
 		return
 	}
-	w.EventRecorder.Event(&aas, corev1.EventTypeNormal, reason, message)
+	w.EventRecorder.Event(&aas, corev1.EventTypeNormal,
+		reasoning.PascalReason(reason), reason+" "+message)
 }
 
 // formatClassifiedMessage builds the structured event message used both

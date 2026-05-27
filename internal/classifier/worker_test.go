@@ -182,11 +182,14 @@ func TestWorker_HappyPath_PatchesStatusAndEmitsEvent(t *testing.T) {
 
 	require.Greater(t, prom.Calls(), 0, "Prometheus must be queried")
 
-	// Drain at least one event of the right reason.
+	// Drain at least one event of the right reason. Per F39, the Reason
+	// field is PascalCase ("PatternClassified") and the snake_case token
+	// is in the message body.
 	require.Eventually(t, func() bool {
 		select {
 		case e := <-rec.Events:
-			return contains(e, reasoning.PatternClassified)
+			return contains(e, "PatternClassified") &&
+				contains(e, reasoning.PatternClassified)
 		default:
 			return false
 		}
@@ -213,10 +216,13 @@ func TestWorker_InsufficientPoints_EmitsPatternUnknown(t *testing.T) {
 		w.Run(ctx)
 	}()
 
+	// Per F39, the Reason field is PascalCase ("PatternUnknown") and the
+	// snake_case token is in the message body.
 	require.Eventually(t, func() bool {
 		select {
 		case e := <-rec.Events:
-			return contains(e, reasoning.PatternUnknown)
+			return contains(e, "PatternUnknown") &&
+				contains(e, reasoning.PatternUnknown)
 		default:
 			return false
 		}

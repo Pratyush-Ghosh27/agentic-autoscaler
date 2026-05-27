@@ -79,7 +79,29 @@ export const options = {
     },
   },
   thresholds: {
-    "http_req_failed": ["rate<0.10"],
+    // Per-side 5xx thresholds — same rationale as ramp.js (see the comment
+    // block there for the full evidence trail). Two failure modes compound
+    // under spiky load and they're fundamentally asymmetric between sides:
+    //
+    // 1. K6's `ramping-arrival-rate` executor generates bursty arrival when
+    //    100 VUs wake up simultaneously for a 500-RPS spike, briefly
+    //    pushing instantaneous per-pod arrival above the concurrency=8
+    //    semaphore even when *average* per-pod RPS is well within capacity.
+    //    Affects both sides equally; structural to the test framework.
+    // 2. AGENTIC SIDE recovers within a single 60s reconcile window
+    //    (controller queries Prometheus directly with deployment-level sum,
+    //    sees the spike immediately, scales toward unboundedRecommended).
+    //    HPA SIDE lags because the prometheus-adapter custom-metrics path
+    //    (status=~"2.." filter + [1m] rate window vs 30s scrape interval)
+    //    under-counts saturation traffic — same fragility as in ramp.js.
+    //
+    // 0.10 on the agentic side is loosened from steady's 0.05 to absorb the
+    // unavoidable burst-overflow micro-windows; tighter than ramp's 0.05
+    // would be desirable but spike scenarios put more pressure on the
+    // semaphore. 0.50 on the HPA side catches catastrophic regressions
+    // without gating on the structural prom-adapter weakness.
+    "http_req_failed{url:agentic}": ["rate<0.10"],
+    "http_req_failed{url:hpa}":     ["rate<0.50"],
   },
 };
 

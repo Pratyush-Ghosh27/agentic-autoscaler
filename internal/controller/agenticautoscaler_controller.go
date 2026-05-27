@@ -184,11 +184,18 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		log.Error(err, "failed to get target Deployment")
 		return ctrl.Result{RequeueAfter: r.requeueInterval()}, nil
 	}
-	// Generation-change detection (design §6.1 trigger 4). The classifier
-	// manager dedups against the last seen value, so this call is
-	// safe to make on every reconcile. Skipped when Classifier is nil.
+	// Revision-change detection (design §6.1 trigger 4 / F19). We watch
+	// the `deployment.kubernetes.io/revision` annotation rather than
+	// metadata.generation because the apiserver bumps generation on
+	// every /scale patch the controller itself issues — which would
+	// fire a spurious re-classification on every reconcile that scales.
+	// The revision annotation is only set/bumped by the Deployment
+	// controller on actual rollouts. The classifier manager dedups
+	// against the last seen value, so this call is safe to make on
+	// every reconcile. Skipped when Classifier is nil.
 	if r.Classifier != nil {
-		r.Classifier.ObserveDeploymentGeneration(req.NamespacedName, deploy.Generation)
+		revision := deploy.Annotations["deployment.kubernetes.io/revision"]
+		r.Classifier.ObserveDeploymentRevision(req.NamespacedName, revision)
 	}
 	currentReplicas := int32(1)
 	if deploy.Spec.Replicas != nil {

@@ -25,6 +25,8 @@ deploy/
 
 ## Apply
 
+> **Canonical path:** `make kind-up && make kind-load && make install-deps && make deploy`. The Makefile encodes the correct apply order and is what CI uses; the manual sequence below is **reference only** for ad-hoc debugging or running parts of the stack standalone.
+
 The actual command sequence (cluster bring-up, image build, image load,
 manifest apply ordering) is owned by Plan #11's Makefile. Quick reference:
 

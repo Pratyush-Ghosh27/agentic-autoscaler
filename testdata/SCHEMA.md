@@ -35,5 +35,5 @@ load them as golden inputs.
 | `spiky_1440.json` | `GenSpiky` | `cv > 0.50` AND `peak_to_trough > 5` |
 | `gradual_ramp_1440.json` | `GenRamp` | `\|trend_slope\| > 2.0 rps/min` |
 | `default_1440.json` | `GenDefault` | none of the above triggers |
-| `flat_70.json` | `GenFlat` | minimum-confidence boundary (70 points) |
-| `insufficient_50.json` | `GenFlat` | below `CLASSIFIER_MIN_POINTS` |
+| `flat_70.json` | `GenFlat` | v1-era minimum-confidence boundary (70 points). At v2's `CLASSIFIER_MIN_POINTS=72` default this fixture is *below* the boundary; the classifier will emit `pattern_unknown` on it. Useful precisely for testing that branch. |
+| `insufficient_50.json` | `GenFlat` | below `CLASSIFIER_MIN_POINTS` (any version) |

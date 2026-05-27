@@ -54,6 +54,30 @@ ConfigMap by re-running `make deploy` — Kustomize's
 `configMapGenerator` produces a new content-hash-suffixed name and the
 sidecar picks it up on the next sync (~30 s).
 
+## v2 changes that affect custom dashboards
+
+If you maintain custom Grafana panels alongside this one, two v2
+changes will silently break filters:
+
+- **K8s Event `Reason` field is PascalCase.** Plan 16 / G22 / F39
+  migrated the K8s Event `Reason` field from snake_case (`scale_up`,
+  `step_capped_up`, `max_replicas_binding`) to PascalCase (`ScaleUp`,
+  `StepCappedUp`, `MaxReplicasBinding`) per K8s convention. Custom
+  panels filtering on `kube_event_count{reason="scale_up"}` will return
+  empty after upgrade — update them to `reason="ScaleUp"`. The
+  shipped *Scaling Events* panel (#6) was updated in Plan 17 / cosmetic
+  follow-up. The full snake_case ↔ PascalCase mapping lives in
+  [`internal/reasoning/tokens.go`](../../internal/reasoning/tokens.go)
+  (`PascalReason`).
+
+- **New Forecast Service metric: `forecast_dispatch_total{model_used}`.**
+  Plan 18 added a counter labelled by the resolved (post-fallback)
+  forecaster. Useful as a stacked-bar panel showing
+  `sum by (model_used) (rate(forecast_dispatch_total[5m]))` to make
+  forecaster traffic share visible at a glance. The nightly E2E asserts
+  on `model_used="gbdt_quantile" > 0` after a `preferredForecaster`
+  patch (see `docs/runbooks/nightly-e2e.md`).
+
 ## Troubleshooting
 
 - **Dashboard not appearing** — verify the ConfigMap exists and is

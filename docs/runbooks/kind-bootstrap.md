@@ -7,7 +7,7 @@
 ## Prerequisites
 
 - Docker (running)
-- Go 1.23+
+- Go 1.24+ (matches `go.mod`)
 - Python 3.12+
 - `make tools` (installs `controller-gen`, `kustomize`, `setup-envtest`,
   `golangci-lint`, `kubeconform` into `./bin/`)
@@ -15,6 +15,7 @@
 - *(Optional)* `k6` for the load-generation runbooks
 - *(Optional)* `ollama` for the explainability path; see
   [`ollama-setup.md`](ollama-setup.md)
+- *(If upgrading from v1)* read [`../migrating-v1-to-v2.md`](../migrating-v1-to-v2.md) first; v2 env-var defaults differ from v1.
 
 ## Steps
 

@@ -103,7 +103,7 @@ func TestExtractFeatures_FlatSeries(t *testing.T) {
 
 func TestExtractFeatures_PeriodicSeries(t *testing.T) {
 	f := classifier.ExtractFeatures(loadSeries(t, "periodic_1440.json"))
-	assert.Greater(t, f.TodCorrelation, 0.70)
+	assert.Greater(t, f.HourlyAutocorr, 0.70)
 }
 
 func TestExtractFeatures_SpikySeries(t *testing.T) {
@@ -120,7 +120,7 @@ func TestExtractFeatures_RampSeries(t *testing.T) {
 func TestExtractFeatures_EmptySeries(t *testing.T) {
 	f := classifier.ExtractFeatures(nil)
 	assert.Equal(t, 0.0, f.CV)
-	assert.Equal(t, 0.0, f.TodCorrelation)
+	assert.Equal(t, 0.0, f.HourlyAutocorr)
 	assert.Equal(t, 0.0, f.PeakToTrough)
 	assert.Equal(t, 0.0, f.TrendSlope)
 }
@@ -181,7 +181,7 @@ func TestExtractFeatures_BelowTodOverlapReturnsZero(t *testing.T) {
 		series[i] = 100 + float64(i)
 	}
 	f := classifier.ExtractFeatures(series)
-	assert.Equal(t, 0.0, f.TodCorrelation)
+	assert.Equal(t, 0.0, f.HourlyAutocorr)
 }
 
 func TestExtractFeatures_TrendSlopeOnFlatSeries(t *testing.T) {

@@ -62,7 +62,7 @@ func HourlyAutocorrLag(resolutionMin int) int {
 	return 60 / resolutionMin
 }
 
-// Features holds the four extracted features from design §7.
+// Features holds the four extracted features from design_v2.md §7.
 type Features struct {
 	// CV is the coefficient of variation: stddev / mean. Returns 0 when
 	// mean < 1 to avoid division-by-near-zero blowup on idle series.
@@ -73,10 +73,14 @@ type Features struct {
 	// ratios ("idle service had a brief 5 RPS spike → 5x peak ratio?").
 	PeakToTrough float64
 
-	// TodCorrelation is the Pearson correlation between the series
-	// shifted by TodLag and the unshifted series. Strong positive
-	// correlation indicates a recurring 60-minute pattern.
-	TodCorrelation float64
+	// HourlyAutocorr is the Pearson correlation between the series
+	// shifted by lag = 60 / cold-path-resolution-min (TodLag at 1-min,
+	// HourlyAutocorrLag(5)=12 at v2's 5-min default) and the unshifted
+	// series. Strong positive correlation indicates a recurring
+	// 60-minute pattern. Was named TodCorrelation in v1 (when the
+	// feature was tod_correlation); see design_v2.md §7 + v2_revision
+	// notes F4a/F13 for the rename narrative.
+	HourlyAutocorr float64
 
 	// TrendSlope is the least-squares slope (rps per sample / per minute
 	// when sampling cadence is 1 min).
@@ -116,7 +120,7 @@ func ExtractFeatures(series []float64) Features {
 	return Features{
 		CV:             cv,
 		PeakToTrough:   peakToTrough,
-		TodCorrelation: todCorrelation(detrend(series, slope), TodLag, MinTodOverlap),
+		HourlyAutocorr: hourlyAutocorr(detrend(series, slope), TodLag, MinTodOverlap),
 		TrendSlope:     slope,
 	}
 }
@@ -266,7 +270,12 @@ func ComputeHourlyProfile(series []float64, resolutionMin, startHourUTC, minHour
 	return profile, distinctHours >= minHours
 }
 
-func todCorrelation(series []float64, lag, minOverlap int) float64 {
+// hourlyAutocorr computes the lag-N Pearson autocorrelation of the
+// (detrended) series. With lag = 60 / cold-path-resolution-min, this
+// captures hour-period repetition. Returns 0 when the overlap is too
+// short or when either side has zero variance. Was named todCorrelation
+// in v1; see Features.HourlyAutocorr.
+func hourlyAutocorr(series []float64, lag, minOverlap int) float64 {
 	n := len(series)
 	if n < lag+minOverlap {
 		return 0

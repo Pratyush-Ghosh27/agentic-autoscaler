@@ -22,9 +22,8 @@ func GenFlat(seed int64, n int) []float64 {
 }
 
 // GenPeriodic produces a series with a strong 60-minute repeating cycle.
-// Target: hourly_autocorr > 0.70 (named tod_correlation in v1; the
-// signal is the same, the Go field is still Features.TodCorrelation —
-// see internal/classifier/features.go).
+// Target: hourly_autocorr > 0.70 (named tod_correlation in v1; the Go
+// field is Features.HourlyAutocorr — see internal/classifier/features.go).
 //
 // The amplitude (100) is chosen large relative to the noise (stddev=20)
 // so the lag-N Pearson correlation stays well above the 0.70 threshold

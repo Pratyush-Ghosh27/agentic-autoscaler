@@ -31,7 +31,7 @@ load them as golden inputs.
 | File | Generator | Target features |
 | --- | --- | --- |
 | `flat_1440.json` | `GenFlat` | `cv < 0.10` |
-| `periodic_1440.json` | `GenPeriodic` | `tod_correlation > 0.70` |
+| `periodic_1440.json` | `GenPeriodic` | `hourly_autocorr > 0.70` (named `tod_correlation` in v1) |
 | `spiky_1440.json` | `GenSpiky` | `cv > 0.50` AND `peak_to_trough > 5` |
 | `gradual_ramp_1440.json` | `GenRamp` | `\|trend_slope\| > 2.0 rps/min` |
 | `default_1440.json` | `GenDefault` | none of the above triggers |

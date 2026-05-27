@@ -1,6 +1,6 @@
 # **Agentic Autoscaler — Design Spec**
 
-Date: 2026-05-25 Status: Draft for team review (v2 — complete spec; supersedes v1 dated 2026-05-21)
+Date: 2026-05-27 Status: Approved (v2 — complete spec; supersedes v1 dated 2026-05-21)
 
 Audit history: `docs/v2_revision notes.md` (append-only). This file is current-state only.
 

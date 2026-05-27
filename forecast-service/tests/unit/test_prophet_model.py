@@ -75,3 +75,56 @@ def test_prophet_accepts_context_kwarg_and_does_not_regress(
     result = forecast_prophet(flat_series_30, horizon_minutes=5, context=None)
     assert result >= 0.0
     assert result < 10000.0
+
+
+# --- T4: hourly_regressor on/off behaviour (G14) -----------------------------
+
+
+def _ctx_with_profile_validity(*, valid: bool) -> "ContextPayload":  # noqa: F821
+    """Helper that builds a minimally-populated ContextPayload whose
+    only knob is ``hourly_profile_valid``. Imported lazily to keep
+    test collection cheap when Prophet tests are skipped."""
+    from forecast.models import ContextPayload
+
+    return ContextPayload(
+        baseline_rps=50,
+        peak_p95_rps=200,
+        trend_24h_slope=0.0,
+        hourly_profile=[50] * 24,
+        hourly_profile_valid=valid,
+        current_hour_utc=12,
+        current_minute_utc=0,
+    )
+
+
+@pytest.mark.slow
+def test_prophet_skips_hour_regressor_when_profile_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T4 (G14): with PROPHET_USE_HOURLY_REGRESSOR=true *but* the
+    incoming ContextPayload reports hourly_profile_valid=False, the
+    regressor must be skipped (soft fallback). Behaviour is asserted
+    via "does not raise" because Prophet would otherwise complain
+    that an added regressor lacks values."""
+    monkeypatch.setenv("PROPHET_USE_HOURLY_REGRESSOR", "true")
+    history = [10.0] * 30
+    predicted = forecast_prophet(
+        history, horizon_minutes=5, context=_ctx_with_profile_validity(valid=False)
+    )
+    assert predicted >= 0.0
+
+
+@pytest.mark.slow
+def test_prophet_skips_hour_regressor_when_toggle_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T4 (G14): PROPHET_USE_HOURLY_REGRESSOR=false suppresses the
+    regressor even when the profile is valid. Same "does not raise"
+    contract — we don't assert numeric movement here because Prophet
+    runs are noisy on flat data; T14 covers end-to-end signal."""
+    monkeypatch.setenv("PROPHET_USE_HOURLY_REGRESSOR", "false")
+    history = [10.0] * 30
+    predicted = forecast_prophet(
+        history, horizon_minutes=5, context=_ctx_with_profile_validity(valid=True)
+    )
+    assert predicted >= 0.0

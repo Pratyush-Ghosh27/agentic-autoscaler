@@ -36,6 +36,10 @@ const (
 const (
 	ForecasterLinearExtrap = "linear_extrap"
 	ForecasterProphet      = "prophet"
+	// ForecasterGBDTQuantile is the LightGBM quantile-regression
+	// forecaster for spiky workloads. Phase 3 / G12; see
+	// docs/design_v2.md §5 forecast_gbdt_quantile.
+	ForecasterGBDTQuantile = "gbdt_quantile"
 )
 
 // ClassifiedOutput is the set of params the classifier writes to

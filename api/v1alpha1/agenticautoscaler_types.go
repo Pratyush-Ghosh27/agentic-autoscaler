@@ -74,7 +74,9 @@ type AgenticAutoscalerSpec struct {
 	ScaleDownCooldownSeconds *int32 `json:"scaleDownCooldownSeconds,omitempty"`
 
 	// PreferredForecaster. nil or "auto" means "defer to classifier".
-	// +kubebuilder:validation:Enum=prophet;linear_extrap;auto
+	// "gbdt_quantile" is an opt-in spike-aware forecaster; auto/classifier
+	// never selects it (F22), so it only ever runs when the user pins it.
+	// +kubebuilder:validation:Enum=prophet;linear_extrap;gbdt_quantile;auto
 	// +optional
 	PreferredForecaster *string `json:"preferredForecaster,omitempty"`
 }
@@ -112,8 +114,10 @@ type ClassifiedParams struct {
 	// MaxStepSize is the classifier's recommended maximum replica delta per reconcile.
 	MaxStepSize int32 `json:"maxStepSize"`
 
-	// PreferredForecaster is "prophet" or "linear_extrap".
-	// +kubebuilder:validation:Enum=prophet;linear_extrap
+	// PreferredForecaster is "prophet", "linear_extrap", or "gbdt_quantile".
+	// Note: per F22 the classifier itself MUST NOT emit "gbdt_quantile" in
+	// auto mode — it only appears here when the user pinned it on the spec.
+	// +kubebuilder:validation:Enum=prophet;linear_extrap;gbdt_quantile
 	PreferredForecaster string `json:"preferredForecaster"`
 
 	// ClassifiedAt is the timestamp of the most recent classification.

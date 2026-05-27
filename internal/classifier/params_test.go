@@ -20,6 +20,15 @@ func TestKPeriodicDownConstantExists(t *testing.T) {
 		"KPeriodicDown must be 0.5 per design_v2.md §7")
 }
 
+// TestForecasterGBDTQuantileConstantExists pins G12 (Phase 3): the
+// third forecaster's name is exported as ForecasterGBDTQuantile and
+// matches the snake_case value used in the CRD enum, the webhook
+// validator, and the Forecast Service Pydantic Literal.
+func TestForecasterGBDTQuantileConstantExists(t *testing.T) {
+	assert.Equal(t, "gbdt_quantile", classifier.ForecasterGBDTQuantile,
+		"ForecasterGBDTQuantile must be %q per docs/design_v2.md §5", "gbdt_quantile")
+}
+
 func TestComputeParams_FlatTraffic(t *testing.T) {
 	// cv=0, tod=0 → scaleUp = 120/(1+0) = 120, scaleDown = 180*1/1 = 180
 	// pt=1 → maxStep clamped to 1; tod=0 + slope=0 → linear_extrap.

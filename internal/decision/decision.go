@@ -12,7 +12,7 @@ You may obtain a copy of the License at
 // AgenticAutoscaler controller. It has zero I/O, zero Kubernetes imports
 // beyond the simple value types, and zero calls to time.Now (the clock
 // is injected via the Now field on each input struct). This makes every
-// quirk of design.md §5 testable from a Go unit test in microseconds.
+// quirk of design_v2.md §5 testable from a Go unit test in microseconds.
 package decision
 
 import (

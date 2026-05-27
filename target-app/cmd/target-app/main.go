@@ -1,5 +1,5 @@
 // target-app is the instrumented HTTP server scaled by the agentic
-// autoscaler's controlled experiment. See docs/design.md §3.
+// autoscaler's controlled experiment. See docs/design_v2.md §3.
 package main
 
 import (

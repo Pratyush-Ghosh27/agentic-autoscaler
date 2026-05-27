@@ -178,7 +178,7 @@ func main() {
 	// supervised by a Manager. The reconciler calls Ensure / Stop /
 	// SignalReclassify / ObserveDeploymentGeneration as part of the
 	// normal reconcile flow, so the worker is invisible to call sites
-	// that only care about hot-path scaling. See docs/design.md §6.1.
+	// that only care about hot-path scaling. See docs/design_v2.md §6.1.
 	signalCtx := ctrl.SetupSignalHandler()
 	classifierManager := classifier.NewManager(
 		signalCtx,

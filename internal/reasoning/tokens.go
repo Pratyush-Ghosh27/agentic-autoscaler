@@ -1,5 +1,5 @@
 // Package reasoning centralises the reasoning tokens emitted as
-// Kubernetes Event reasons by the controller. See docs/design.md
+// Kubernetes Event reasons by the controller. See docs/design_v2.md
 // §5, §6, and §9 for context.
 package reasoning
 

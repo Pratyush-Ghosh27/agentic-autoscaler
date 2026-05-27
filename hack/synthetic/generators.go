@@ -22,11 +22,14 @@ func GenFlat(seed int64, n int) []float64 {
 }
 
 // GenPeriodic produces a series with a strong 60-minute repeating cycle.
-// Target: tod_correlation > 0.70.
+// Target: hourly_autocorr > 0.70 (named tod_correlation in v1; the
+// signal is the same, the Go field is still Features.TodCorrelation —
+// see internal/classifier/features.go).
 //
 // The amplitude (100) is chosen large relative to the noise (stddev=20)
-// so the lag-60 Pearson correlation stays well above the 0.70 threshold
-// even after the smaller noise term is applied.
+// so the lag-N Pearson correlation stays well above the 0.70 threshold
+// even after the smaller noise term is applied. N is the cadence-aware
+// lag: 60 at 1-min (v1) / 12 at 5-min (v2 default cold path).
 func GenPeriodic(seed int64, n int) []float64 {
 	rng := rand.New(rand.NewSource(seed)) //nolint:gosec
 	out := make([]float64, n)
@@ -68,7 +71,7 @@ func GenRamp(seed int64, n int) []float64 {
 }
 
 // GenDefault produces moderate variance without triggering any specific
-// rule. Target: cv ∈ [0.10, 0.50], tod_correlation < 0.70, peak_to_trough
+// rule. Target: cv ∈ [0.10, 0.50], hourly_autocorr < 0.70, peak_to_trough
 // ≤ 5, |slope| < 2.
 func GenDefault(seed int64, n int) []float64 {
 	rng := rand.New(rand.NewSource(seed)) //nolint:gosec

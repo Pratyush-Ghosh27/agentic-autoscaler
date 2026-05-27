@@ -72,7 +72,7 @@ spec:
         name: manager
         env:
           # Required (controller panics on startup if either is unset).
-          # See docs/design.md §4 for the full env-var inventory.
+          # See docs/design_v2.md §4 for the full env-var inventory.
           #
           # The Service exposes port 80 (targeting the container's 8000);
           # see deploy/manifests/forecast-service.yaml. We omit the port

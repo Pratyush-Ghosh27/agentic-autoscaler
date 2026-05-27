@@ -14,7 +14,7 @@ import (
 	"github.com/pratyush-ghosh/agentic-autoscaler/internal/reasoning"
 )
 
-// TestChannelNotifier_DropAndReplace pins the design.md §6.2 contract:
+// TestChannelNotifier_DropAndReplace pins the design_v2.md §6.2 contract:
 // a queued event must be replaced by the newer one, not retained or buffered.
 func TestChannelNotifier_DropAndReplace(t *testing.T) {
 	ch := make(chan controller.ExplainRequest, 1)

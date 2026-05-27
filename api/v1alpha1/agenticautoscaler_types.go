@@ -25,7 +25,7 @@ import (
 // All fields except TargetRef are optional. Optional scaling-behaviour fields
 // (MaxStepSize, ScaleUpCooldownSeconds, ScaleDownCooldownSeconds,
 // PreferredForecaster) default to nil meaning "defer to the classifier";
-// see docs/design.md §8 for the full precedence chain.
+// see docs/design_v2.md §8 for the full precedence chain.
 type AgenticAutoscalerSpec struct {
 	// TargetRef points at the Deployment to autoscale.
 	// +kubebuilder:validation:Required
@@ -44,7 +44,7 @@ type AgenticAutoscalerSpec struct {
 	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
 
 	// RpsPerPodMin is the safety floor for the self-calibrating
-	// rps_per_pod estimate. See docs/design.md §5 step 5.
+	// rps_per_pod estimate. See docs/design_v2.md §5 step 5.
 	// +kubebuilder:default=50
 	// +kubebuilder:validation:Minimum=1
 	// +optional
@@ -58,7 +58,7 @@ type AgenticAutoscalerSpec struct {
 	RpsPerPodMax *int32 `json:"rpsPerPodMax,omitempty"`
 
 	// MaxStepSize caps replicas moved per reconcile. nil means "defer to
-	// classifier". Operator override per docs/design.md §8.
+	// classifier". Operator override per docs/design_v2.md §8.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	MaxStepSize *int32 `json:"maxStepSize,omitempty"`
@@ -99,7 +99,7 @@ type CrossVersionObjectReference struct {
 
 // ClassifiedParams holds the classifier's recommended scaling parameters.
 // Written exclusively by the ClassifierWorker; reconciler reads but never writes.
-// See docs/design.md §6.1 and §7.
+// See docs/design_v2.md §6.1 and §7.
 type ClassifiedParams struct {
 	// Pattern is one of: flat, periodic, spiky, gradual_ramp, default.
 	// +kubebuilder:validation:Enum=flat;periodic;spiky;gradual_ramp;default
@@ -127,7 +127,7 @@ type ClassifiedParams struct {
 	HistoryPoints int32 `json:"historyPoints"`
 
 	// Confidence is "high" if HistoryPoints >= CLASSIFIER_HIGH_CONFIDENCE_POINTS,
-	// otherwise "medium". See docs/design.md §4.
+	// otherwise "medium". See docs/design_v2.md §4.
 	// +kubebuilder:validation:Enum=high;medium
 	Confidence string `json:"confidence"`
 
@@ -187,7 +187,7 @@ const (
 )
 
 // AgenticAutoscalerStatus reports the controller's observed state.
-// See docs/design.md §4.
+// See docs/design_v2.md §4.
 type AgenticAutoscalerStatus struct {
 	// Phase is the high-level controller state.
 	// +optional
@@ -202,7 +202,7 @@ type AgenticAutoscalerStatus struct {
 	CurrentReplicas int32 `json:"currentReplicas,omitempty"`
 
 	// RecommendedReplicas is the pre-cap, pre-cooldown replica recommendation.
-	// See docs/design.md §5 step 5.
+	// See docs/design_v2.md §5 step 5.
 	// +optional
 	RecommendedReplicas int32 `json:"recommendedReplicas,omitempty"`
 
@@ -219,7 +219,7 @@ type AgenticAutoscalerStatus struct {
 	PredictedRPS int32 `json:"predictedRPS,omitempty"`
 
 	// RpsPerPodCurrent is the live sliding-window median rps_per_pod.
-	// Persisted for restart recovery (see docs/design.md §5).
+	// Persisted for restart recovery (see docs/design_v2.md §5).
 	// +optional
 	RpsPerPodCurrent int32 `json:"rpsPerPodCurrent,omitempty"`
 

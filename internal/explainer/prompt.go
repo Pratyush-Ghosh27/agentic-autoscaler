@@ -9,7 +9,7 @@ You may obtain a copy of the License at
 */
 
 // Package explainer implements the ExplainWorker, which generates plain
-// English scaling explanations using Ollama. See docs/design.md §6.2.
+// English scaling explanations using Ollama. See docs/design_v2.md §6.2.
 package explainer
 
 import (

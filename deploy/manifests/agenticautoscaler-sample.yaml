@@ -31,3 +31,11 @@ spec:
   # specific tunings.
   rpsPerPodMin: 10
   rpsPerPodMax: 30
+  # preferredForecaster pins which forecaster the hot path uses. Leave
+  # unset (or "auto") to defer to the classifier — recommended for most
+  # workloads. The CRD enum is: prophet | linear_extrap | gbdt_quantile |
+  # auto. Per design_v2.md §6.3 (F22) the auto path NEVER selects
+  # gbdt_quantile; that forecaster is opt-in only. Pin it explicitly when
+  # the workload has bursty / spike behaviour that quantile bands handle
+  # better than Prophet's seasonality model.
+  # preferredForecaster: auto

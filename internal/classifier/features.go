@@ -13,9 +13,12 @@ You may obtain a copy of the License at
 // computation (this file, classify.go, confidence.go, params.go,
 // pipeline.go) and the goroutine that wraps it in I/O (worker.go).
 //
-// All formulae and thresholds come from docs/design.md §7. Renaming a
+// All formulae and thresholds come from docs/design_v2.md §7. Renaming a
 // constant or shifting a threshold is a behavioural change and must be
-// reflected in the spec.
+// reflected in the spec. v1 callers (RunPipeline / ExtractFeatures) are
+// preserved verbatim against docs/design.md §7 for backward compatibility;
+// v2 callers must use RunPipelineV2 with a PipelineConfig that carries
+// the cold-path resolution.
 package classifier
 
 import (

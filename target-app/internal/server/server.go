@@ -1,5 +1,5 @@
 // Package server is the HTTP server for the target-app load target.
-// See docs/design.md §3 for the controlled experiment context.
+// See docs/design_v2.md §3 for the controlled experiment context.
 package server
 
 import (
@@ -63,7 +63,7 @@ func New(cfg Config) *Server {
 
 	// Metric NAMES intentionally match the design's PromQL convention
 	// (`http_requests_total`, `http_request_duration_seconds`) — see
-	// docs/design.md §5 step 2 and internal/promql/builder.go. The earlier
+	// docs/design_v2.md §5 step 2 and internal/promql/builder.go. The earlier
 	// `target_app_*` prefix was application-specific and broke every
 	// controller / assertion / dashboard query that filtered on the
 	// design's generic name. Keep these names locked.

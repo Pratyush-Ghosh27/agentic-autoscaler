@@ -44,7 +44,7 @@ const ringBufferCapacity = 10
 
 // AgenticAutoscalerReconciler reconciles an AgenticAutoscaler object.
 //
-// The reconcile loop implements design.md §5 step-by-step. Every subsystem
+// The reconcile loop implements design_v2.md §5 step-by-step. Every subsystem
 // the loop talks to (Prometheus, Forecast Service, ExplainWorker) is
 // injected behind an interface so the orchestration logic can be exercised
 // with in-memory fakes inside envtest.
@@ -74,7 +74,7 @@ type AgenticAutoscalerReconciler struct {
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// Reconcile is the main entry point. It implements design.md §5 step-by-step:
+// Reconcile is the main entry point. It implements design_v2.md §5 step-by-step:
 //  1. Pre-checks (kill switch, deletion, HPA conflict).
 //  2. Prometheus instant + range queries.
 //  3. POST /recommend to the Forecast Service.

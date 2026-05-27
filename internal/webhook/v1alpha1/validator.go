@@ -18,7 +18,7 @@ import (
 )
 
 // ValidateSpec returns a non-nil error if the spec violates any of the
-// bound checks documented in docs/design.md §4. The error message lists
+// bound checks documented in docs/design_v2.md §4. The error message lists
 // every problem found, so an operator with a misconfigured CR sees all
 // of them at once instead of fixing one and re-applying.
 //

@@ -49,8 +49,13 @@ func percentile99(s []float64) float64 {
 	return sorted[idx]
 }
 
-// pearsonLag60 mirrors the classifier's tod_correlation: Pearson on
-// (series[:n-60], series[60:]).
+// pearsonLag60 mirrors the v1-cadence (1-min) hourly autocorrelation:
+// Pearson on (series[:n-60], series[60:]). Equivalent to the classifier's
+// hourly_autocorr at resolution=1 (named tod_correlation in v1; the Go
+// field is still Features.TodCorrelation). The v2 cold path runs at 5-min
+// resolution, where the equivalent computation uses lag=12; this helper
+// is intentionally pinned to lag=60 because the synthetic fixtures are
+// generated at 1-min cadence.
 func pearsonLag60(s []float64) float64 {
 	const lag = 60
 	n := len(s)
@@ -115,7 +120,7 @@ func TestGenPeriodic_HighTodCorrelation(t *testing.T) {
 	s := GenPeriodic(42, 1440)
 	require.Len(t, s, 1440)
 	corr := pearsonLag60(s)
-	assert.Greater(t, corr, 0.70, "periodic series must have tod_correlation > 0.70")
+	assert.Greater(t, corr, 0.70, "periodic series must have hourly_autocorr > 0.70 (v1-cadence: tod_correlation)")
 }
 
 func TestGenSpiky_HighCVAndPeakToTrough(t *testing.T) {

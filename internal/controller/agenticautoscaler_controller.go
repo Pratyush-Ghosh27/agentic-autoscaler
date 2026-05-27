@@ -222,9 +222,10 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	maxReplicas := derefOr(aas.Spec.MaxReplicas, 10)
 	unbounded := decision.ComputeUnboundedRecommended(forecastResp.PredictedRPS, rpsPerPod)
 	recommended, bindingReason := decision.ClampRecommended(unbounded, minReplicas, maxReplicas)
-	_ = bindingReason // wired into CapInput.BindingReason in T6
 
-	// Step 6-8: cap + cooldown + hysteresis.
+	// Step 6-8: cap + cooldown + hysteresis. BindingReason is the tentative
+	// step-5 token; ApplyCapAndCooldown overwrites it when step 6 cap or
+	// step 7 cooldown fires (design_v2.md §5 precedence rules 1-4).
 	capOut := decision.ApplyCapAndCooldown(decision.CapInput{
 		Recommended:   recommended,
 		Current:       currentReplicas,
@@ -234,6 +235,7 @@ func (r *AgenticAutoscalerReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		LastScaleUp:   state.LastScaleUpTime,
 		LastScaleDown: state.LastScaleDownTime,
 		Now:           now,
+		BindingReason: bindingReason,
 	})
 
 	// Step 9: patch /scale.

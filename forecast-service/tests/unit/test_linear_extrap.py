@@ -181,3 +181,41 @@ def test_linear_extrap_intercept_is_centroid_anchored_after_blend(
         history, horizon_minutes=5, context=_ctx(trend=0.0)
     )
     assert predicted == pytest.approx(16.6667, abs=0.01)
+
+
+# --- T8: clip at peak_p95_rps * 1.5 (G15) -----------------------------------
+
+
+def test_linear_extrap_clips_at_peak_p95_times_one_point_five(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T8 (G15): a runaway short-window slope must be clipped at
+    ``context.peak_p95_rps * 1.5``. With WEIGHT=1.0 the blend is a
+    no-op so the raw recent slope drives the prediction; the only
+    surviving safety net is the upper clip.
+
+    The history is a 10-point ramp from 0 to 1000 (recent slope ~111).
+    At horizon=10, target_x = 10 + 10 - 1 = 19. After T7's intercept
+    recompute (y_bar=450, x_bar=4.5, slope=111.515...) the unclipped
+    prediction is ~(111.5*19 - 111.5*4.5 + 450) = ~2068; the clip at
+    peak_p95_rps=200 * 1.5 = 300 must bring it back to exactly 300.
+    """
+    monkeypatch.setenv("LINEAR_EXTRAP_RECENT_WEIGHT", "1.0")
+    monkeypatch.setenv("LINEAR_EXTRAP_WINDOW_MINUTES", "10")
+    history = [0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 1000.0]
+    predicted = forecast_linear_extrap(
+        history, horizon_minutes=10, context=_ctx(trend=0.0, p95=200)
+    )
+    assert predicted == pytest.approx(300.0, abs=0.01), (
+        f"expected clipped to 300, got {predicted}"
+    )
+
+
+def test_linear_extrap_does_not_clip_when_context_is_none() -> None:
+    """T8 (G15): without context, no peak_p95_rps is known, so no clip
+    applies — back-compat with cold-start callers must be preserved."""
+    history = [0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 1000.0]
+    predicted = forecast_linear_extrap(history, horizon_minutes=10, context=None)
+    assert predicted > 500.0, (
+        "expected an unclipped large extrapolation when context is None"
+    )

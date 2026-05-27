@@ -144,4 +144,14 @@ def forecast_linear_extrap(
     target_x = n + horizon_minutes - 1
     predicted = slope * target_x + intercept
 
+    if context is not None and context.peak_p95_rps > 0:
+        # G15: clip the prediction at peak_p95_rps * 1.5 to keep a
+        # noisy short-window fit from runaway extrapolation. We only
+        # apply the upper clip; the lower bound is the existing
+        # non-negativity floor below. peak_p95_rps == 0 disables the
+        # clip (a fresh deployment with no observed traffic has no
+        # meaningful p95).
+        clip = float(context.peak_p95_rps) * 1.5
+        predicted = min(float(predicted), clip)
+
     return max(0.0, float(predicted))

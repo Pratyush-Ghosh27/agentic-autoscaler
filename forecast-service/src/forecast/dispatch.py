@@ -69,7 +69,9 @@ def recommend(
     model_used: ModelName
     if use_prophet:
         try:
-            predicted = forecast_prophet(rps_history, horizon_minutes)
+            predicted = forecast_prophet(
+                rps_history, horizon_minutes, context=context
+            )
             model_used = "prophet"
         except Exception as exc:  # noqa: BLE001 - any Prophet failure is a fallback trigger
             logging.warning("prophet failed, falling back to linear_extrap: %s", exc)

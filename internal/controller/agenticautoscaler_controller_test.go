@@ -1157,8 +1157,8 @@ var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
 		// body for log searchability. unboundedRecommended=80 also in body.
 		Eventually(fakeRec.Events).Should(Receive(
 			SatisfyAll(
-				ContainSubstring("MaxReplicasBinding"),               // PascalCase Reason
-				ContainSubstring(reasoning.MaxReplicasBinding),       // snake_case in body
+				ContainSubstring("MaxReplicasBinding"),         // PascalCase Reason
+				ContainSubstring(reasoning.MaxReplicasBinding), // snake_case in body
 				ContainSubstring("unboundedRecommended=80"),
 				ContainSubstring("recommended=10"),
 			)))
@@ -1209,8 +1209,8 @@ var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
 
 		Eventually(fakeRec.Events).Should(Receive(
 			SatisfyAll(
-				ContainSubstring("StepCappedUp"),                // PascalCase Reason
-				ContainSubstring(reasoning.StepCappedUp),        // snake_case in body
+				ContainSubstring("StepCappedUp"),         // PascalCase Reason
+				ContainSubstring(reasoning.StepCappedUp), // snake_case in body
 				ContainSubstring("unboundedRecommended=16"),
 			)))
 	})
@@ -1245,8 +1245,8 @@ var _ = Describe("AgenticAutoscalerReconciler G13 binding surfacing", func() {
 		// "scale_up" prefix is in the body for log searchability.
 		Eventually(fakeRec.Events).Should(Receive(
 			SatisfyAll(
-				ContainSubstring("ScaleUp"),                  // PascalCase Reason
-				ContainSubstring(reasoning.ScaleUp),          // snake_case in body
+				ContainSubstring("ScaleUp"),         // PascalCase Reason
+				ContainSubstring(reasoning.ScaleUp), // snake_case in body
 				Not(ContainSubstring("unboundedRecommended=")),
 				Not(ContainSubstring("recommended=4")),
 			)))

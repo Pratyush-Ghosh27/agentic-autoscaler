@@ -94,8 +94,9 @@ step "[6/6] Smoke assertions"
 #   1. The AgenticAutoscaler CR exists and was admitted (== webhook OK).
 #   2. The controller has emitted at least one reconcile Event against it
 #      (== reconciler is running and observing the CR; the specific
-#      reason — `metrics_unavailable`, `forecast_unavailable`, `ScaleUp`,
-#      `NoChange`, etc. — doesn't matter for smoke).
+#      Reason field — PascalCase per K8s convention since v2 G22, e.g.
+#      `MetricsUnavailable`, `ForecastUnavailable`, `ScaleUp`, `NoChange`
+#      — doesn't matter for smoke).
 #   3. The target /healthz endpoints are reachable.
 
 # Wait up to 60 s for at least one Event of any reason to land.

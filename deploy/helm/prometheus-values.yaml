@@ -41,6 +41,17 @@ grafana:
   persistence:
     enabled: false
   adminPassword: admin
+  # Expose Grafana on the kind control-plane node at NodePort 30080 so
+  # demos / VM-hosted clusters can reach it at http://<vm-ip>:30080
+  # without `kubectl port-forward`. The matching port is pre-published
+  # to the host by deploy/kind/cluster.yaml's extraPortMappings, so on
+  # the VM itself Grafana is also reachable at http://localhost:30080.
+  # NodePort 30080 is in the 30000-32767 range required by Kubernetes.
+  service:
+    type: NodePort
+    port: 80
+    targetPort: 3000
+    nodePort: 30080
 
 prometheus:
   prometheusSpec:

@@ -421,8 +421,15 @@ test-e2e: manifests generate fmt vet ## Run the kubebuilder-scaffolded Go e2e su
 ##@ Observability
 # ============================================================
 
+.PHONY: grafana-url
+grafana-url: ## Print Grafana's persistent NodePort URL (http://localhost:30080).
+	@echo "Grafana (NodePort, survives SSH disconnects):"
+	@echo "  on this VM:    http://localhost:30080"
+	@echo "  from elsewhere: http://$$(hostname -I 2>/dev/null | awk '{print $$1}'):30080"
+	@echo "  credentials:   admin / admin (override via grafana.adminPassword in deploy/helm/prometheus-values.yaml)"
+
 .PHONY: port-forward-grafana
-port-forward-grafana: ## Port-forward Grafana to localhost:3000 (admin/prom-operator).
+port-forward-grafana: ## Port-forward Grafana to localhost:3000 (fallback; prefer `make grafana-url` — NodePort 30080 is permanent).
 	$(KUBECTL) port-forward -n monitoring svc/kube-prom-grafana 3000:80
 
 .PHONY: port-forward-prometheus

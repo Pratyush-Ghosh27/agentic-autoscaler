@@ -1,6 +1,12 @@
 ---
 # 3-node kind cluster: 1 control-plane + 2 workers.
-# 30080 port-forward is reserved for k6 ingress / Grafana web access during demos.
+#
+# extraPortMappings publish the control-plane node's NodePort 30080 to the
+# host's port 30080. Grafana's Service (deploy/helm/prometheus-values.yaml,
+# grafana.service) pins itself to NodePort 30080, so on the VM running this
+# kind cluster Grafana is permanently reachable at http://localhost:30080
+# (or http://<vm-ip>:30080 from elsewhere) with no `kubectl port-forward`
+# needed — survives SSH disconnects, VM session resumes, etc.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:

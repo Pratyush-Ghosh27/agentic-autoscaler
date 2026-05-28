@@ -15,9 +15,18 @@ label and auto-imports them.
 After `make deploy`:
 
 ```sh
-make port-forward-grafana
-# http://localhost:3000   (admin / prom-operator)
+make grafana-url
+# http://localhost:30080   (admin / admin)
 ```
+
+The Grafana Service is published as a NodePort on the kind control-plane
+node (pinned to 30080 in `deploy/helm/prometheus-values.yaml`), and
+`deploy/kind/cluster.yaml`'s `extraPortMappings` forwards the container's
+port 30080 to the host. The URL is permanent for the lifetime of the
+cluster, survives SSH disconnects to the host VM, and is reachable from
+elsewhere on the network at `http://<vm-ip>:30080`. (`make
+port-forward-grafana` is still wired as a fallback that proxies to
+`localhost:3000` if the NodePort path isn't viable in your environment.)
 
 Navigate to *Dashboards → Browse → "Agentic Autoscaler"*.
 
@@ -27,10 +36,7 @@ If the sidecar isn't running (custom Helm values, non-standard install,
 etc.) you can import the JSON directly:
 
 ```sh
-make port-forward-grafana &
-sleep 2
-
-curl -s -X POST http://admin:prom-operator@localhost:3000/api/dashboards/db \
+curl -s -X POST http://admin:admin@localhost:30080/api/dashboards/db \
   -H "Content-Type: application/json" \
   -d "$(jq '{dashboard: ., overwrite: true}' deploy/grafana/agentic-dashboard.json)"
 ```

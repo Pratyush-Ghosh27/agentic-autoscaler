@@ -59,7 +59,7 @@ make kind-load         # load images into kind
 make install-deps      # Helm: cert-manager + kube-prometheus-stack
 make deploy            # apply manifests + sample AgenticAutoscaler CR
 make k6-incluster-ramp # drive load (in-cluster Job, real load-balancing)
-make port-forward-grafana   # http://localhost:3000  (admin / prom-operator)
+make grafana-url       # http://localhost:30080  (admin / admin) — NodePort, no port-forward needed
 ```
 
 Step-by-step walkthrough: [`docs/runbooks/kind-bootstrap.md`](docs/runbooks/kind-bootstrap.md).

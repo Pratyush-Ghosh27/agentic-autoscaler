@@ -114,9 +114,17 @@ ClusterIP and gets real kube-proxy load-balancing across all replicas.
 ### 8. Observe
 
 ```bash
-make port-forward-grafana
-# http://localhost:3000  (admin / prom-operator)
+make grafana-url
+# http://localhost:30080  (admin / admin)
 ```
+
+The Grafana Service is published as a NodePort on the kind control-plane
+node, and `deploy/kind/cluster.yaml` forwards container port 30080 to the
+host's port 30080. So Grafana is reachable at `http://localhost:30080`
+permanently — no `kubectl port-forward` needed, and the connection
+survives SSH disconnects to the VM hosting the cluster. From a remote
+laptop, use `http://<vm-ip>:30080` directly. (`make port-forward-grafana`
+still works as a fallback if NodePort isn't reachable in your network.)
 
 The "Agentic Autoscaler" dashboard auto-loads from the configured
 ConfigMap. See [`grafana-dashboard.md`](grafana-dashboard.md).

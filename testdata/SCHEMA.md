@@ -1,5 +1,16 @@
 # Synthetic Fixture Schema
 
+> **Scope:** these JSON files are **unit-test fixtures only**, consumed
+> directly by the Go classifier suite and the Python forecast-service
+> suite. They are *not* designed to be pushed into a live cluster's
+> Prometheus — `hack/synthetic/main.go` anchors every fixture's
+> `timestamp_unix` to a fixed Unix epoch (`1716500000` =
+> `2024-05-23T20:53:20 UTC`) so regenerations stay deterministic and
+> git diffs stay tractable. Backfilling a recent-history Prometheus
+> from these files would require re-stamping every point relative to
+> `now` and enabling Prometheus' `--web.enable-remote-write-receiver`
+> (kube-prometheus-stack disables it by default).
+
 Each `.json` file is an array of `DataPoint` objects:
 
 ```json

@@ -60,13 +60,21 @@ make deploy
 
 Applies in dependency order:
 
-1. `deploy/manifests/namespace.yaml` (`demo`, `agentic-system`)
-2. `config/default` via Kustomize (controller manager + webhook + RBAC)
-3. `forecast-service` Deployment + Service
-4. `target-agentic` and `target-hpa` Deployments + Services
+1. `deploy/manifests/namespace.yaml` (creates `demo` and `agentic-system`)
+2. `config/default` via Kustomize (controller manager + webhook + RBAC, into the kustomize-default namespace `agentic-autoscaler-system` — created implicitly by the overlay)
+3. `forecast-service` Deployment + Service (in `agentic-system`)
+4. `target-agentic` and `target-hpa` Deployments + Services (in `demo`)
 5. The HPA for `app-hpa`
 6. `deploy/grafana` (dashboard ConfigMap via configMapGenerator)
 7. The sample `AgenticAutoscaler` CR
+
+> **Three namespaces, not two.** The controller manager and webhook live in
+> `agentic-autoscaler-system` (the kubebuilder default, set in
+> `config/default/kustomization.yaml`). The forecast-service lives in
+> `agentic-system`. Application workloads live in `demo`. This is a
+> historical kubebuilder-scaffold split that the project never collapsed —
+> `kubectl logs -n agentic-system <controller-pod>` returns "No resources
+> found" because the controller isn't there.
 
 ### 6. Verify
 
@@ -76,20 +84,32 @@ kubectl get aas -A
 kubectl get hpa -A
 ```
 
-You should see the controller pod `Running` in `agentic-system`, the
-forecast-service `Running`, and both `app-agentic` and `app-hpa` ready in
-`demo`. The `aas` CR should show a `Phase` of `Ready` (or briefly
-`Conflict` if the HPA list query happens to race the apply order — it
-self-heals on the next reconcile).
+You should see the controller pod `Running` in `agentic-autoscaler-system`,
+the forecast-service `Running` in `agentic-system`, and both `app-agentic`
+and `app-hpa` ready in `demo`. The `aas` CR should show a `Phase` of
+`Ready` (or briefly `Conflict` if the HPA list query happens to race the
+apply order — it self-heals on the next reconcile). `Phase` stays blank
+for the first ~10 minutes after deploy while the hot path accumulates
+`HOT_PATH_MIN_POINTS=10` of Prometheus history; that's by design.
 
 ### 7. Drive load
 
 ```bash
-make k6-ramp
+make k6-incluster-ramp
 ```
 
-Or any of `k6-steady`, `k6-spiky`, `k6-bursty`. See
-[`k6/README.md`](../../k6/README.md) for the full configuration knobs.
+Or any of `k6-incluster-steady`, `k6-incluster-spiky`, `k6-incluster-bursty`.
+These run k6 as a Job inside the cluster so traffic hits the Services'
+ClusterIP and gets real kube-proxy load-balancing across all replicas.
+
+> **Don't use `make k6-ramp` (the host-mode target) for autoscaler
+> evaluation.** It posts to `localhost:8080`/`8081`, requires manual
+> `kubectl port-forward svc/...`, and inherits the single-pod-pinning
+> problem from [kubernetes/kubernetes#15180](https://github.com/kubernetes/kubernetes/issues/15180)
+> — only one replica per side ever receives traffic. The host-mode
+> targets exist for debugging a known single pod, not for comparing
+> autoscaler behaviour. See [`k6/README.md`](../../k6/README.md) for the
+> full configuration knobs and the in-cluster-vs-host trade-off.
 
 ### 8. Observe
 
@@ -133,3 +153,31 @@ make kind-down  # nukes the kind cluster
 - **HPA-managed target stuck at `MinReplicas`** — the HPA's metric source
   (custom-metrics or Prometheus adapter) needs a few minutes to populate
   before it scales. This is not a bug; it's HPA behaviour.
+- **k6 pod or other workloads fail with `failed to create fsnotify watcher: too many open files`** —
+  on RHEL/CentOS hosts `fs.inotify.max_user_instances` defaults to **128**,
+  which is exhausted by a 3-node kind cluster running cert-manager +
+  kube-prometheus-stack + the application stack + a k6 Job (each fsnotify
+  watcher consumes one inotify instance, and the symptom appears on the
+  next pod that calls `inotify_init1()` after the budget is gone). Raise
+  the limit:
+  ```bash
+  sudo sysctl -w fs.inotify.max_user_instances=8192
+  sudo sysctl -w fs.inotify.max_user_watches=524288
+  # persist across reboots:
+  sudo tee /etc/sysctl.d/99-kind.conf >/dev/null <<'EOF'
+  fs.inotify.max_user_instances = 8192
+  fs.inotify.max_user_watches   = 524288
+  EOF
+  sudo sysctl --system
+  ```
+  New pods pick up the higher limit immediately; existing pods that
+  already errored may need a `kubectl rollout restart`. Documented as the
+  first entry of [kind's known-issues page](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files).
+- **`AgenticAutoscaler` CR's `Phase` column stays blank for several
+  minutes after deploy** — the hot-path reconciler short-circuits with
+  `MetricsUnavailable` Events until it accumulates `HOT_PATH_MIN_POINTS=10`
+  Prometheus samples (~10 min at the 60s scrape interval). The
+  `Pattern` column stays blank for ~72 min while the cold-path classifier
+  builds up `CLASSIFIER_MIN_POINTS=72` samples. Both are by design — watch
+  `kubectl get events -n demo --field-selector involvedObject.name=app-agentic`
+  to see progress monotonically advance through the sample count.

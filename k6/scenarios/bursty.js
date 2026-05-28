@@ -14,6 +14,17 @@
 //   BURST_MIN_INTERVAL      "5"   (seconds)
 //   BURST_MAX_INTERVAL      "30"  (seconds)
 //   BURSTY_TOTAL_DURATION   "15m"
+//   BURSTY_ITERATIONS       "10000"
+//
+// Progress-bar note: this scenario uses the `per-vu-iterations` executor
+// whose progress bar is scaled to `iterations`, not elapsed time. With
+// the default BURSTY_ITERATIONS=10000 and a single VU producing ~3-4
+// iterations per minute (one BURST_SIZE-burst plus a 5-30s sleep), the
+// bar will display ~0% for the entire run; `maxDuration` is the real
+// terminator. This is intentional — leaving the iteration target high
+// keeps the scenario from short-circuiting if an operator overrides
+// BURSTY_TOTAL_DURATION upward (e.g. for a longer soak). To get an
+// honest progress bar for a 15m default run, set BURSTY_ITERATIONS=60.
 
 import http from "k6/http";
 import { check, sleep } from "k6";

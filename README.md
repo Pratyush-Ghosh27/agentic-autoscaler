@@ -58,7 +58,7 @@ make kind-up           # 3-node kind cluster
 make kind-load         # load images into kind
 make install-deps      # Helm: cert-manager + kube-prometheus-stack
 make deploy            # apply manifests + sample AgenticAutoscaler CR
-make k6-ramp           # drive load and watch both targets scale
+make k6-incluster-ramp # drive load (in-cluster Job, real load-balancing)
 make port-forward-grafana   # http://localhost:3000  (admin / prom-operator)
 ```
 

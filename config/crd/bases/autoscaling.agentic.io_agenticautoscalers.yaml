@@ -234,8 +234,13 @@ spec:
                   preferredForecaster:
                     description: |-
                       PreferredForecaster is "prophet", "linear_extrap", or "gbdt_quantile".
-                      Note: per F22 the classifier itself MUST NOT emit "gbdt_quantile" in
-                      auto mode — it only appears here when the user pinned it on the spec.
+                      All three are reachable from the classifier's pattern → forecaster
+                      table (internal/classifier/params.go, G19): periodic → prophet,
+                      spiky → gbdt_quantile, flat/gradual_ramp/default → linear_extrap.
+                      F22 constrains only the Forecast Service's length-based auto branch
+                      (rule 3 in forecast-service/src/forecast/dispatch.py), which never
+                      picks gbdt_quantile when preferred_model is empty; an explicit spec
+                      pin or a "spiky" classification is the way in.
                     enum:
                     - prophet
                     - linear_extrap

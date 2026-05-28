@@ -29,8 +29,15 @@ safe (the v1 controller ignores unknown `status.*` fields).
 
 - **Third forecaster: `gbdt_quantile`**, a LightGBM upper-quantile predictor
   (p90 by default) for spiky workloads where Prophet's seasonality fit lags
-  burst behaviour. Opt-in via `spec.preferredForecaster: gbdt_quantile`; the
-  `auto` selector never picks it. ([G12], [F22])
+  burst behaviour. Auto-selected when the cold-path classifier identifies a
+  `spiky` pattern via the G19 pattern → forecaster table in
+  [`internal/classifier/params.go`](internal/classifier/params.go) (~T+6h
+  on a fresh CR), or explicitly pinned via
+  `spec.preferredForecaster: gbdt_quantile` to skip the classifier wait.
+  F22 constrains only the Forecast Service's length-based auto branch
+  (rule 3 in [`forecast-service/src/forecast/dispatch.py`](forecast-service/src/forecast/dispatch.py)),
+  which never reaches gbdt_quantile when `preferred_model` is empty —
+  the controller-side auto path *is* able to. ([G12], [F22], [G19])
 - **`status.classifiedParams.context` block** that carries long-horizon
   structure from the ClassifierWorker to the hot path on every `/recommend`
   call: `baselineRPS`, `peakP95RPS`, `trend24hSlope`, `hourlyProfile[24]`,

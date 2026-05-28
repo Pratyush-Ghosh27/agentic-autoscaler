@@ -38,6 +38,21 @@ esac
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 NS="${K6_NAMESPACE:-demo}"
 JOB_NAME="k6-${SCENARIO}"
+
+# Trap SIGINT/SIGTERM so Ctrl-C from a developer streaming logs does the
+# obvious thing — tear down the in-cluster Job — instead of leaving it
+# running. Without this, an interrupted `make k6-incluster-ramp` exits
+# the wrapper but the Job keeps producing load against `app-agentic` and
+# `app-hpa`, which silently confounds the next experiment (the HPA twin
+# keeps scaling against the orphaned load). The trap is best-effort: if
+# the Job hasn't been applied yet (e.g. Ctrl-C during the ConfigMap
+# rebuild) the delete is a no-op via `--ignore-not-found`.
+cleanup_on_signal() {
+    echo "==> caught signal, deleting Job/${JOB_NAME} in ${NS}"
+    kubectl delete job "${JOB_NAME}" -n "$NS" --ignore-not-found --wait=false || true
+    exit 130
+}
+trap cleanup_on_signal INT TERM
 # 60 min covers the longest currently-defined scenario (sustained =
 # 5m up + 30m hold + 5m down = 40m of k6, plus Pod schedule + image
 # pull + finalisation overhead). The previous 30m default would silently

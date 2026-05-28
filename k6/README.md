@@ -116,4 +116,14 @@ go test -tags=integration -v ./k6/...
 | `BURST_MIN_INTERVAL` | bursty | `5` |
 | `BURST_MAX_INTERVAL` | bursty | `30` |
 | `BURSTY_TOTAL_DURATION` | bursty | `15m` |
-| `BURSTY_ITERATIONS` | bursty | `10000` |
+| `BURSTY_ITERATIONS` | bursty | `10000` [^1] |
+
+[^1]: The bursty scenario uses the `per-vu-iterations` executor whose
+    progress bar is scaled to `iterations`, not elapsed time. At the
+    default `BURSTY_ITERATIONS=10000` with a single VU producing ~3-4
+    iterations per minute, the bar reads ~0% for the entire run;
+    `BURSTY_TOTAL_DURATION` is the real terminator. Set
+    `BURSTY_ITERATIONS=60` (roughly what a 15m run actually completes)
+    for an honest progress bar. The default is intentionally high so
+    overriding `BURSTY_TOTAL_DURATION` upward for soak runs doesn't
+    accidentally short-circuit on iterations.

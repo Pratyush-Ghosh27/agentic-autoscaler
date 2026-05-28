@@ -12,6 +12,9 @@ deploy/
 │   └── certmanager-values.yaml      # cert-manager values (CRDs included)
 ├── manifests/
 │   ├── namespace.yaml               # demo + agentic-system namespaces
+│                                    # (the controller's agentic-autoscaler-system
+│                                    #  namespace is created by config/default
+│                                    #  kustomize overlay, not this file)
 │   ├── target-agentic.yaml          # app-agentic Deployment + Service
 │   ├── target-hpa.yaml              # app-hpa Deployment + Service (PodTemplate identical)
 │   ├── forecast-service.yaml        # forecast-service Deployment + Service

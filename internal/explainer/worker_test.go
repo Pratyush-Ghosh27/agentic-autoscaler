@@ -7,9 +7,14 @@ package explainer_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -267,6 +272,61 @@ func TestWorker_OllamaEmptyResponseSentinel_LogsAndContinues(t *testing.T) {
 	select {
 	case e := <-rec.Events:
 		t.Fatalf("unexpected event on empty-response sentinel: %s", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// -----------------------------------------------------------------------
+// Connection-refused (ollama not running) must be demoted to Info, not
+// Error. We don't have a hook into the underlying logr.Logger from the
+// test, but we can at minimum prove that:
+//   (a) the error chain produced by net/http when ollama is unreachable
+//       satisfies errors.Is(err, syscall.ECONNREFUSED) (so the demote
+//       branch fires), and
+//   (b) the worker still does not emit a K8s Event on this error path.
+// Without (a), the demote branch is dead code; the test pins the
+// std-lib error-wrapping invariant the production switch relies on.
+// -----------------------------------------------------------------------
+
+func TestWorker_ConnectionRefused_MatchesECONNREFUSED_And_NoEvent(t *testing.T) {
+	// Synthesise the exact error chain net/http returns for "no listener
+	// on the target port" — url.Error -> net.OpError -> os.SyscallError
+	// -> syscall.ECONNREFUSED — so errors.Is walks the chain and matches.
+	wrappedErr := &url.Error{
+		Op:  "Post",
+		URL: "http://localhost:11434/v1/chat/completions",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &os.SyscallError{
+				Syscall: "connect",
+				Err:     syscall.ECONNREFUSED,
+			},
+		},
+	}
+	clientErr := fmt.Errorf("ollama request: %w", wrappedErr)
+
+	require.True(t, errors.Is(clientErr, syscall.ECONNREFUSED),
+		"client error chain must satisfy errors.Is ECONNREFUSED so logOllamaErr's demote branch fires")
+
+	fake := &fakeOllama{err: clientErr}
+	w, rec := newWorker(t, fake, newCR())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan controller.ExplainRequest, 1)
+
+	go w.Run(ctx, ch)
+	ch <- baseRequest()
+
+	require.Eventually(t, func() bool { return fake.CallCount() == 1 },
+		500*time.Millisecond, 10*time.Millisecond)
+
+	// No event must be emitted on the connection-refused path — same
+	// contract as other error branches.
+	select {
+	case e := <-rec.Events:
+		t.Fatalf("unexpected event on connection-refused: %s", e)
 	case <-time.After(100 * time.Millisecond):
 	}
 }

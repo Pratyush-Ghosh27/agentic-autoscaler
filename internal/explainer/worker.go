@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"syscall"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -123,6 +124,16 @@ func (w *Worker) handleRequest(ctx context.Context, logger logr.Logger, req cont
 // logOllamaErr classifies the error per design §9 and logs at the right
 // level. We do not emit any K8s Event on failure: the explanation is
 // best-effort UX, not a scaling decision.
+//
+// Connection-refused is demoted to Info because the documented default
+// in-cluster posture is "Ollama not configured" — config/manager/manager.yaml
+// leaves OLLAMA_URL unset and the Go config substitutes
+// http://localhost:11434, which is the controller pod's loopback where
+// nothing is listening. Logging ECONNREFUSED at Error every reconcile
+// drowns the controller logs in noise and trips alerting that watches
+// for ERROR-level lines. Operators who *do* want explanations point
+// OLLAMA_URL at a real Ollama and an actual failure surfaces in the
+// default branch.
 func (w *Worker) logOllamaErr(logger logr.Logger, err error, req controller.ExplainRequest) {
 	switch {
 	case errors.Is(err, ollama.ErrModelNotFound):
@@ -131,6 +142,10 @@ func (w *Worker) logOllamaErr(logger logr.Logger, err error, req controller.Expl
 			"model", w.Config.Model, "err", err.Error())
 	case errors.Is(err, ollama.ErrEmptyResponse):
 		logger.Info("ollama returned empty response; skipping event",
+			"namespace", req.Namespace, "name", req.Name)
+	case errors.Is(err, syscall.ECONNREFUSED):
+		logger.Info("ollama unreachable (connection refused); explanations disabled. "+
+			"Set OLLAMA_URL to a reachable endpoint to enable.",
 			"namespace", req.Namespace, "name", req.Name)
 	default:
 		logger.Error(err, "ollama call failed",

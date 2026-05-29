@@ -17,6 +17,40 @@
 # to be resolved at container start, not template-render time) pass
 # through unchanged.
 #
+# Hackathon-four long-run hardening (the rotating scenario stopped
+# after one cycle on hackathon-two; this template was the root cause
+# in all but one of the failure modes — see commit message for the
+# full enumeration). The four spec-level hardenings here are:
+#
+#   - resources.requests == resources.limits  → Guaranteed QoS class,
+#     immune to kubelet eviction by memory pressure.
+#   - resources.limits.memory = 2Gi (was 512Mi) → covers 24h of k6's
+#     internal metric buffers + the 1,590-stage rotating schedule
+#     without OOMKill. k6 metric buffer growth is ~50MB/h at 200 RPS;
+#     512Mi was eaten in ~6h of a 23h20m run, which matches the
+#     reported "stopped after one cycle ≈ 140 min plus warmup".
+#   - ttlSecondsAfterFinished = 86400 (was 600) → failed Pod is still
+#     present for `kubectl describe` and `kubectl logs --previous` the
+#     next morning. The previous 10-minute TTL was why the user
+#     observed "the Job just disappeared" — Kubernetes was working
+#     as configured; the configuration was wrong for long runs.
+#   - terminationGracePeriodSeconds = 300 (was default 30) → k6 has
+#     time to flush metrics and drain VUs cleanly when the wrapper
+#     issues `kubectl delete`. Avoids spurious SIGKILL exit codes
+#     that trigger `backoffLimit` retry logic.
+#
+# `backoffLimit: 0` is preserved deliberately. For long-running
+# scenarios (rotating, diurnal, stress), a retry restarts from cycle 0,
+# which:
+#   1. Confounds the timeline of any downstream Prometheus analysis
+#      (Grafana panels show two superimposed runs).
+#   2. Wastes the 23h of clock time the failed run consumed.
+#   3. Doesn't fix the root cause — if the Pod OOMKilled at cycle 8,
+#      the retry will OOMKill at cycle 8 too.
+# A flaky run is a regression signal, not noise to be smoothed away.
+# If a retry is genuinely needed, re-run `make k6-incluster-rotating`
+# manually after fixing the underlying cause.
+#
 # k6 image pin: grafana/k6:0.54.0 matches the K6_VERSION used in the
 # nightly workflow. Bump both together.
 apiVersion: batch/v1
@@ -28,10 +62,15 @@ metadata:
     app: k6
     scenario: ${SCENARIO}
 spec:
-  # Don't retry — one run is the result. A flaky run is a regression
-  # signal, not noise to be smoothed away.
   backoffLimit: 0
-  ttlSecondsAfterFinished: 600
+  # 24h Pod retention after terminal state. Was 600s (10 min), which
+  # quietly garbage-collected the Pod before anyone could inspect why
+  # the rotating run died. See file header.
+  ttlSecondsAfterFinished: 86400
+  # activeDeadlineSeconds is intentionally NOT set: with backoffLimit=0
+  # we own termination via the wrapper's polling loop + per-scenario
+  # TIMEOUT. Setting it here too would create two independent kill
+  # paths that have to be kept in sync forever.
   template:
     metadata:
       labels:
@@ -39,26 +78,33 @@ spec:
         scenario: ${SCENARIO}
     spec:
       restartPolicy: Never
+      # Allow k6 5 minutes to flush metric buffers + drain in-flight
+      # VUs when the wrapper issues a delete. Default is 30s which
+      # frequently SIGKILLs k6 mid-flush at 200+ RPS.
+      terminationGracePeriodSeconds: 300
       containers:
         - name: k6
           image: grafana/k6:0.54.0
           imagePullPolicy: IfNotPresent
-          # `--no-summary` keeps stdout clean for the wrapper; the
-          # quantitative comparison reads from Prometheus, not k6's
-          # own summary, so we don't need it. The TARGET_*_URL refs
-          # below are deliberately NOT in the envsubst whitelist —
-          # they're resolved at container start as Pod-level env vars,
-          # not by the host's envsubst pass.
+          # Capture k6's exit code explicitly so the "done" marker
+          # always lands on stdout, even on threshold-trip exit. The
+          # previous `set -e` aborted the script before the echo,
+          # making it impossible to tell from a kubectl logs tail
+          # whether the run completed-with-failures or was killed
+          # externally. The TARGET_*_URL refs below are deliberately
+          # NOT in the envsubst whitelist — they're resolved at
+          # container start as Pod-level env vars.
           command:
             - /bin/sh
             - -c
             - |
-              set -e
               echo "==> k6 ${SCENARIO} starting"
               echo "    TARGET_AGENTIC_URL=$TARGET_AGENTIC_URL"
               echo "    TARGET_HPA_URL=$TARGET_HPA_URL"
-              k6 run --no-summary /scripts/scenarios/${SCENARIO}.js
-              echo "==> k6 ${SCENARIO} done"
+              k6 run --no-summary --no-color /scripts/scenarios/${SCENARIO}.js
+              rc=$?
+              echo "==> k6 ${SCENARIO} done (exit=${rc})"
+              exit ${rc}
           env:
             # Cluster-internal Service DNS — kube-proxy load-balances
             # across all ready Endpoints behind each ClusterIP.
@@ -111,15 +157,32 @@ spec:
             - name: DIURNAL_TOTAL_HOURS
               value: "${DIURNAL_TOTAL_HOURS}"
           resources:
-            # k6 is a load generator; CPU is what it actually needs.
-            # Memory is small. Numbers from the k6 author's own
-            # recommendation for a few-hundred-VU run.
+            # Guaranteed QoS class: requests == limits on every
+            # resource. Kubelet evicts BestEffort first, then
+            # Burstable; Guaranteed pods are only evicted when
+            # another Guaranteed pod needs the resource (which never
+            # happens on a kind single-node demo cluster). This
+            # eliminates the "Pod evicted by kubelet" failure mode
+            # for the long-running scenarios.
+            #
+            # Memory: 2Gi is empirically sized for a 24h rotating
+            # run at 200 RPS. k6's internal metric aggregation grows
+            # ~50 MiB per hour of accumulated samples; over 24h that
+            # is ~1.2 GiB of headroom inside the 2 GiB limit even
+            # before counting the ~200 MiB resident for the 1,590-
+            # stage schedule itself.
+            #
+            # CPU: 1 core matches k6's published recommendation for
+            # 200-300 RPS arrival-rate executors. Bumping the request
+            # to match the limit also pins the scheduler to a node
+            # with a guaranteed core available, avoiding throttling
+            # under burst load.
             requests:
-              cpu: 250m
-              memory: 128Mi
+              cpu: "1"
+              memory: 2Gi
             limits:
               cpu: "1"
-              memory: 512Mi
+              memory: 2Gi
           volumeMounts:
             - name: scripts
               mountPath: /scripts

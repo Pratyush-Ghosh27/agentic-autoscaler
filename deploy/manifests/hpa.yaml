@@ -53,5 +53,9 @@ spec:
       stabilizationWindowSeconds: 300
       policies:
         - type: Pods
-          value: 2
+          # HACKATHON OVERRIDE: bumped from 2 -> 4 to match AAS's
+          # DEFAULT_MAX_STEP_SIZE=4 (which applies symmetrically up and
+          # down). Keeps scale-down speed identical between the two
+          # scalers so the comparison isolates forecast-lookahead.
+          value: 4
           periodSeconds: 60

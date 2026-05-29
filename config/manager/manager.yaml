@@ -89,6 +89,44 @@ spec:
           # connection refused, see internal/explainer/worker.go).
           - name: OLLAMA_MODEL
             value: "llama3.2"
+          # =====================================================
+          # HACKATHON OVERRIDES (hackathon branch only)
+          # =====================================================
+          # All values below override code defaults in internal/config/
+          # config.go for the June 2 hackathon submission. Goal: make
+          # the controller engage faster on short k6 runs (10-25 min)
+          # so the "predicted RPS approximately equal to actual RPS"
+          # demo claim is visible within the scenario window.
+          # Restore production defaults by deleting this block.
+          #
+          # Tier 1: hot-path responsiveness
+          # 10 -> 3: first forecast call after 3 min instead of 10
+          - name: HOT_PATH_MIN_POINTS
+            value: "3"
+          # 60 -> 15: shrink the range-query window so post-scenario
+          # tails of zeros don't dominate the forecaster input. Fixes
+          # the predicted_rps=0 issue we hit on the second ramp run.
+          - name: HOT_PATH_HISTORY_MINUTES
+            value: "15"
+          # 60 -> 30: 2x more reconcile cycles per minute. Trades a
+          # small bump in Prometheus + forecast-service load for much
+          # finer-grained scaling decisions.
+          - name: RECONCILE_INTERVAL_SECONDS
+            value: "30"
+          # Tier 2: classifier engages within the demo window
+          # 72 -> 22 (the validation floor at default resolution=5).
+          # First classification arrives at ~22 min instead of ~72.
+          - name: CLASSIFIER_MIN_POINTS
+            value: "22"
+          # 30 -> 5: classifier worker re-runs 6x more often, so a
+          # 20-min scenario sees 4 classifications instead of zero.
+          - name: CLASSIFIER_INTERVAL_MINUTES
+            value: "5"
+          # 24 -> 1: cold-path PromQL window. A fresh demo never has
+          # 24h of real data anyway; restricting to 1h makes the
+          # classifier's feature math run on actual values not zeros.
+          - name: CLASSIFIER_HISTORY_HOURS
+            value: "1"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

@@ -28,10 +28,28 @@ spec:
             - containerPort: 8000
               name: http
           env:
+            # HACKATHON OVERRIDE: 10 -> 5 to halve forecast-vs-actual
+            # error (autocorrelation decays with horizon). System still
+            # has ~4 min of lookahead headroom before pod-startup,
+            # cooldowns, and reaction time consume the window.
             - name: FORECAST_HORIZON_MINUTES
-              value: "10"
+              value: "5"
+            # HACKATHON OVERRIDE: 60 -> 15 so the auto-dispatch path
+            # switches to Prophet within ~15 min of a fresh demo run
+            # instead of ~60 min. Keeps the majority of a 25-min k6
+            # scenario on Prophet rather than linear_extrap.
             - name: PROPHET_MIN_POINTS
-              value: "60"
+              value: "15"
+            # HACKATHON ADDITION: 10 -> 5 makes linear_extrap (the cold
+            # forecaster used in the first ~15 min) more reactive to
+            # recent slope, less smoothed by stale history.
+            - name: LINEAR_EXTRAP_WINDOW_MINUTES
+              value: "5"
+            # HACKATHON ADDITION: 30 -> 10 lets gbdt_quantile engage at
+            # ~15 min instead of ~40. Only fires when an AAS CR pins
+            # spec.preferredForecaster: gbdt_quantile.
+            - name: GBDT_MIN_POINTS
+              value: "10"
           resources:
             requests:
               cpu: 200m

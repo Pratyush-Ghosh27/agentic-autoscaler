@@ -29,7 +29,12 @@ spec:
   # defaults (50 / 500 in api/v1alpha1/agenticautoscaler_types.go) are
   # left untouched — those are universal safety bounds, not workload-
   # specific tunings.
-  rpsPerPodMin: 10
+  # HACKATHON OVERRIDE: locked to match HPA's averageValue=30 so the
+  # AAS divisor matches HPA's exactly (1:1 replica math). Strips the
+  # classifier's 3x early-scale advantage so the only remaining
+  # difference between scalers is the forecast lookahead. To restore
+  # production defaults: drop rpsPerPodMin back to 10.
+  rpsPerPodMin: 30
   rpsPerPodMax: 30
   # preferredForecaster pins which forecaster the hot path uses. Leave
   # unset (or "auto") to defer to the classifier — recommended for most

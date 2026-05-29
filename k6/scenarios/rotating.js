@@ -127,13 +127,22 @@ export const options = {
     },
   },
   thresholds: {
-    // Same permissive thresholds as the other long-running scenarios:
-    // the demo's purpose is the forecast-accuracy comparison, not a
-    // pass/fail gate. Catastrophic regressions still fail the run.
-    "http_req_failed{url:agentic}":   ["rate<0.10"],
-    "http_req_failed{url:hpa}":       ["rate<0.50"],
-    "http_req_duration{url:agentic}": ["p(95)<3000"],
-    "http_req_duration{url:hpa}":     ["p(95)<3000"],
+    // Maximally permissive thresholds. The demo's purpose is the
+    // forecast-accuracy + 503-rate-gap comparison via Prometheus,
+    // NOT a pass/fail gate on k6's own metrics. The previous values
+    // (hpa rate<0.50) were a near-miss on hackathon-four: with HPA
+    // tuned to averageValue=50 (~71% per-pod utilisation), HPA's
+    // overall 503 rate over 23h is expected to land at 1-3%, but
+    // any single bad cycle could push the overall window above 0.50
+    // and trip the threshold, exiting k6 with rc!=0 → Job marked
+    // Failed → backoffLimit=0 → no retry → "the run disappeared".
+    // 0.95 is well above any realistic outcome and reserves the
+    // threshold purely for "k6 is fundamentally broken" failures
+    // (e.g., target Service unreachable for the whole run).
+    "http_req_failed{url:agentic}":   ["rate<0.95"],
+    "http_req_failed{url:hpa}":       ["rate<0.95"],
+    "http_req_duration{url:agentic}": ["p(95)<10000"],
+    "http_req_duration{url:hpa}":     ["p(95)<10000"],
   },
 };
 

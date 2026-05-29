@@ -29,10 +29,10 @@
 # -----------------------------------------------------------------------
 set -euo pipefail
 
-SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal|rotating>}"
+SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal|rotating|stress>}"
 case "$SCENARIO" in
-  ramp|steady|spiky|bursty|diurnal|rotating) ;;
-  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal|rotating)"; exit 2 ;;
+  ramp|steady|spiky|bursty|diurnal|rotating|stress) ;;
+  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal|rotating|stress)"; exit 2 ;;
 esac
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -96,6 +96,16 @@ export ROTATING_RAMP_PEAK_RPS="${ROTATING_RAMP_PEAK_RPS:-200}"
 export ROTATING_SPIKE_RPS="${ROTATING_SPIKE_RPS:-200}"
 export ROTATING_BURSTY_FLOOR="${ROTATING_BURSTY_FLOOR:-60}"
 export ROTATING_BURSTY_CEILING="${ROTATING_BURSTY_CEILING:-140}"
+# Stress scenario tunables (hackathon-three-branch addition). Default
+# 6×10min cycles = 60 min total; spike amplitude (600 RPS over 200 RPS
+# baseline) is calibrated to exceed HPA's settled capacity at spike
+# onset so 503s actually accumulate. See k6/scenarios/stress.js header
+# for the per-pod-capacity math.
+export STRESS_CYCLES="${STRESS_CYCLES:-6}"
+export STRESS_BASELINE_RPS="${STRESS_BASELINE_RPS:-200}"
+export STRESS_SPIKE_RPS="${STRESS_SPIKE_RPS:-600}"
+export STRESS_BASELINE_MIN="${STRESS_BASELINE_MIN:-7}"
+export STRESS_SPIKE_MIN="${STRESS_SPIKE_MIN:-3}"
 
 # Per-scenario default timeout. Long-running scenarios derive their
 # ceiling from the relevant tunable (+1h slack for image pull, Pod
@@ -109,6 +119,13 @@ case "$SCENARIO" in
   rotating)
       # ROTATING_CYCLES * 140 min per cycle * 60 s/min + 1h slack.
       DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${ROTATING_CYCLES} * 140 * 60 + 3600 }")"
+      TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
+      ;;
+  stress)
+      # STRESS_CYCLES * (BASELINE_MIN + SPIKE_MIN + ~10s ramp overhead)
+      # in seconds, + 1h slack. The +20s/cycle covers the two 5s ramps
+      # in stress.js plus k6 stage-transition jitter.
+      DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${STRESS_CYCLES} * (${STRESS_BASELINE_MIN} * 60 + ${STRESS_SPIKE_MIN} * 60 + 20) + 3600 }")"
       TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
       ;;
   *)
@@ -125,7 +142,7 @@ esac
 # whitelist arg expects literal `$VAR` tokens, not their expanded
 # values. shellcheck SC2016 is a false positive here.
 # shellcheck disable=SC2016
-ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS $ROTATING_CYCLES $ROTATING_STEADY_RPS $ROTATING_RAMP_PEAK_RPS $ROTATING_SPIKE_RPS $ROTATING_BURSTY_FLOOR $ROTATING_BURSTY_CEILING'
+ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS $ROTATING_CYCLES $ROTATING_STEADY_RPS $ROTATING_RAMP_PEAK_RPS $ROTATING_SPIKE_RPS $ROTATING_BURSTY_FLOOR $ROTATING_BURSTY_CEILING $STRESS_CYCLES $STRESS_BASELINE_RPS $STRESS_SPIKE_RPS $STRESS_BASELINE_MIN $STRESS_SPIKE_MIN'
 
 # Re-create the ConfigMap on every run so script changes are picked up
 # without a separate sync step. `--dry-run=client -o yaml | apply -f -`
@@ -140,6 +157,7 @@ kubectl create configmap k6-scripts \
     --from-file="${ROOT_DIR}/k6/scenarios/bursty.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/diurnal.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/rotating.js" \
+    --from-file="${ROOT_DIR}/k6/scenarios/stress.js" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 # Delete any prior Job of the same name. Job specs are immutable on

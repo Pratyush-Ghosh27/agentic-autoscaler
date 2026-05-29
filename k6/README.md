@@ -1,6 +1,6 @@
 # k6 Load Scenarios
 
-Five load-generation scenarios that drive byte-identical request streams
+Seven load-generation scenarios that drive byte-identical request streams
 to both `app-agentic` (the controller's target) and `app-hpa` (the
 HPA-managed control). Use them to compare tail latency, 503 rate, and
 replica trajectory between the two autoscalers.
@@ -14,6 +14,8 @@ replica trajectory between the two autoscalers.
 | `scenarios/spiky.js` | base load + periodic peaks | 20m | base=50, peak=500, every 2m |
 | `scenarios/bursty.js` | random bursts | 15m | 50/burst, 5–30s pauses |
 | `scenarios/diurnal.js` | 24-stage day-shape with lunch/PM spikes | 24h (configurable) | base=20, peak=300, spike=500 |
+| `scenarios/rotating.js` | continuous 4-pattern cycle for forecast accuracy | 23h20m (10 cycles) | steady=100, ramp peak=200, spike=200, bursty [60,140] |
+| `scenarios/stress.js` | 7m baseline + 3m oversized spike, repeated | 60m (6 cycles) | baseline=200, spike=600 — tuned to expose HPA 503 gap |
 
 Every scenario respects `TARGET_AGENTIC_URL` and `TARGET_HPA_URL` (via
 `lib/targets.js`); when unset, both default to `http://localhost:8080`
@@ -44,11 +46,13 @@ and `http://localhost:8081` respectively.
 ### In-cluster Job (canonical for autoscaler comparison)
 
 ```bash
-make k6-incluster-ramp     # runs as a Job in the demo namespace
+make k6-incluster-ramp       # runs as a Job in the demo namespace
 make k6-incluster-steady
 make k6-incluster-spiky
 make k6-incluster-bursty
-make k6-incluster-diurnal  # 24h diurnal cycle (set DIURNAL_TOTAL_HOURS=N to compress)
+make k6-incluster-diurnal    # 24h diurnal cycle (set DIURNAL_TOTAL_HOURS=N to compress)
+make k6-incluster-rotating   # 24h continuous 4-pattern rotation (forecast accuracy demo)
+make k6-incluster-stress     # 60m oversized-spike loop (503-rate-gap demo)
 ```
 
 Each target wraps `deploy/k6/run-incluster.sh <scenario>`, which:
@@ -151,6 +155,17 @@ go test -tags=integration -v ./k6/...
 | `DIURNAL_PEAK_RPS` | diurnal | `300` |
 | `DIURNAL_SPIKE_RPS` | diurnal | `500` |
 | `DIURNAL_TOTAL_HOURS` | diurnal | `24` (compresses/expands the 24-stage shape) |
+| `ROTATING_CYCLES` | rotating | `10` (10 × 140m = 23h20m) |
+| `ROTATING_STEADY_RPS` | rotating | `100` |
+| `ROTATING_RAMP_PEAK_RPS` | rotating | `200` |
+| `ROTATING_SPIKE_RPS` | rotating | `200` |
+| `ROTATING_BURSTY_FLOOR` | rotating | `60` |
+| `ROTATING_BURSTY_CEILING` | rotating | `140` |
+| `STRESS_CYCLES` | stress | `6` (6 × 10m = 60m) |
+| `STRESS_BASELINE_RPS` | stress | `200` (flat between spikes) |
+| `STRESS_SPIKE_RPS` | stress | `600` (oversized to force HPA failure) |
+| `STRESS_BASELINE_MIN` | stress | `7` (minutes at baseline per cycle) |
+| `STRESS_SPIKE_MIN` | stress | `3` (minutes at spike per cycle) |
 
 [^1]: The bursty scenario uses the `per-vu-iterations` executor whose
     progress bar is scaled to `iterations`, not elapsed time. At the

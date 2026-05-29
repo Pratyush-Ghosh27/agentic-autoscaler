@@ -122,6 +122,16 @@ spec:
               value: "${ROTATING_BURSTY_FLOOR}"
             - name: ROTATING_BURSTY_CEILING
               value: "${ROTATING_BURSTY_CEILING}"
+            - name: STRESS_CYCLES
+              value: "${STRESS_CYCLES}"
+            - name: STRESS_BASELINE_RPS
+              value: "${STRESS_BASELINE_RPS}"
+            - name: STRESS_SPIKE_RPS
+              value: "${STRESS_SPIKE_RPS}"
+            - name: STRESS_BASELINE_MIN
+              value: "${STRESS_BASELINE_MIN}"
+            - name: STRESS_SPIKE_MIN
+              value: "${STRESS_SPIKE_MIN}"
           resources:
             # k6 is a load generator; CPU is what it actually needs.
             # Memory is small. Numbers from the k6 author's own
@@ -158,3 +168,5 @@ spec:
                 path: scenarios/diurnal.js
               - key: rotating.js
                 path: scenarios/rotating.js
+              - key: stress.js
+                path: scenarios/stress.js

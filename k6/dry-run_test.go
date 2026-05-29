@@ -76,6 +76,10 @@ func TestK6DryRun_Rotating(t *testing.T) {
 	runK6Scenario(t, "scenarios/rotating.js")
 }
 
+func TestK6DryRun_Stress(t *testing.T) {
+	runK6Scenario(t, "scenarios/stress.js")
+}
+
 func runK6Scenario(t *testing.T, script string) {
 	t.Helper()
 
@@ -126,6 +130,16 @@ func runK6Scenario(t *testing.T, script string) {
 		"ROTATING_SPIKE_RPS=3",
 		"ROTATING_BURSTY_FLOOR=1",
 		"ROTATING_BURSTY_CEILING=2",
+		// Stress scenario: dry-run path uses --vus=1 --iterations=5 which
+		// overrides the executor entirely, so the test only validates the
+		// script parses + imports without errors. Values below would
+		// produce a 6-second cycle (1m baseline + 1m spike compressed by
+		// the iterations cap) if the executor were honoured.
+		"STRESS_CYCLES=1",
+		"STRESS_BASELINE_RPS=2",
+		"STRESS_SPIKE_RPS=3",
+		"STRESS_BASELINE_MIN=1",
+		"STRESS_SPIKE_MIN=1",
 	)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()

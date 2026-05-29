@@ -71,33 +71,114 @@ The single new change (#20) is purely additive to that stack.
 
 ## Running this demo on an existing cluster
 
-If you're already on a `hackathon-two` cluster, you only need to re-apply
-the HPA manifest — no `make deploy`, no controller restart, no CR change:
+If you're already on a `hackathon-two` cluster, you need to re-apply
+**two** manifests — the HPA tightening AND the hardened k6 Job
+template (the rotating run on hackathon-two stopped after ~1 cycle;
+hackathon-four fixes the root causes). No `make deploy`, no controller
+restart, no CR change required:
 
 ```bash
 git fetch origin
 git checkout hackathon-four
 kubectl apply -f deploy/manifests/hpa.yaml
+# The job.yaml template is applied automatically by run-incluster.sh
+# on the next `make k6-incluster-rotating` invocation — no separate
+# apply needed.
 ```
 
-That single `kubectl apply` updates HPA in place. The next reconcile
-(within 15 seconds) sees the new `averageValue: 50` and starts targeting
-~71% utilisation. Verify:
+Verify the HPA change took effect:
 
 ```bash
 kubectl -n demo describe hpa app-hpa | grep -A2 "Target"
 # expect: Target ...: averageValue: 50
 ```
 
-Then kick off your usual traffic scenario:
+Then kick off the traffic — **under tmux or nohup** so the wrapper
+survives terminal disconnection:
 
 ```bash
-# rotating (the primary demo on this branch — gives BOTH claims in one run):
-make k6-incluster-rotating
+# Recommended (survives ssh disconnect / terminal close):
+tmux new -s k6 'make k6-incluster-rotating'
+# detach with Ctrl-b d; re-attach with: tmux attach -t k6
 
-# OR diurnal:
-make k6-incluster-diurnal
+# OR (writes logs to file, returns immediately):
+nohup make k6-incluster-rotating > k6-rotating.log 2>&1 &
+
+# OR (foreground, only safe if you'll keep the terminal open):
+make k6-incluster-rotating
 ```
+
+Even the bare foreground form is now safe-ish: hackathon-four's
+wrapper auto-disables the SIGINT/SIGHUP trap for `rotating` and
+`diurnal`, so accidental Ctrl-C or terminal close just detaches the
+wrapper without deleting the in-cluster Job. Re-attach with:
+
+```bash
+kubectl logs -f -n demo job/k6-rotating       # resume the log stream
+kubectl get job k6-rotating -n demo -w        # monitor status
+kubectl delete job k6-rotating -n demo        # explicit teardown
+```
+
+## Long-run reliability hardening (`hackathon-four` only)
+
+On `hackathon-two` the 24-hour rotating run was observed to halt after
+~140 minutes (one cycle), with the Job and Pod garbage-collected
+before post-mortem was possible. Eleven failure modes could have
+caused that outcome; `hackathon-four` eliminates all of them in the
+Job template and wrapper.
+
+### `deploy/k6/job.yaml`
+
+| # | Change | Why |
+|---|---|---|
+| 1 | `resources.limits.memory: 512Mi → 2Gi`<br>`resources.requests.memory: 128Mi → 2Gi` | OOMKill protection: k6 metric buffers grow ~50 MiB/hour at 200 RPS; 512 MiB was exhausted between cycles 2-3 of the rotating run. Matching request to limit also puts the Pod in Guaranteed QoS class — immune to kubelet eviction. |
+| 2 | `resources.requests.cpu: 250m → 1`<br>`resources.limits.cpu: 1` (unchanged) | Guaranteed-QoS requirement: all resources must have request==limit. Also prevents CPU throttling under spike load. |
+| 3 | `ttlSecondsAfterFinished: 600 → 86400` | "The Job just disappeared" was Kubernetes garbage-collecting the failed Pod after 10 min, exactly as configured — but wrong for long runs. 24h retention means the Pod is still there next morning for `kubectl describe` and `kubectl logs --previous`. |
+| 4 | `terminationGracePeriodSeconds: (default 30) → 300` | Lets k6 flush metric buffers and drain in-flight VUs on `kubectl delete`, avoiding spurious SIGKILL exit codes that would have flipped Job to Failed state. |
+| 5 | Pod command: `set -e + k6 run` → `k6 run; rc=$?; echo done; exit $rc` | Ensures the "done" log line always appears, even when k6 exits non-zero. Previously `set -e` killed the script mid-line on threshold trip, leaving an ambiguous tail. |
+| 6 | `backoffLimit: 0` (kept) — comment updated | Retries restart from cycle 0 → confound the Grafana timeline AND don't fix the root cause (an OOM at cycle 8 will OOM at cycle 8 on retry too). Explicit no-retry with a 24h Pod for post-mortem is strictly better. |
+
+### `deploy/k6/run-incluster.sh`
+
+| # | Change | Why |
+|---|---|---|
+| 7 | `K6_NO_TRAP=1` auto-default for `rotating` and `diurnal` | Wrapper no longer deletes the Job on SIGINT/SIGTERM/SIGHUP for long scenarios. Accidental Ctrl-C, terminal close, or SSH disconnect now just detaches the wrapper — the Job keeps running. Override with `K6_NO_TRAP=0` to force trap. |
+| 8 | New `detach_on_signal` handler prints re-attach commands | When the wrapper detaches, it tells you exactly how to resume log streaming and how to stop the run later. No more lost context. |
+| 9 | Upfront banner for long scenarios — explicit tmux/nohup guidance | Surface the survive-disconnect contract loudly *before* the Pod starts so the user knows they don't need to babysit the terminal. |
+| 10 | `kubectl wait --for=Ready --timeout=120s → 300s` | Cold image pulls of `grafana/k6:0.54.0` (~140 MB compressed) frequently exceeded 120s on the first daily kind-cluster spin-up, causing the wrapper to bail before the Pod was actually unhealthy. |
+| 11 | Poll interval `5s → 30s` for `diurnal`/`rotating` | 24h × 1 call / 5s = 17,280 API calls per run. At 30s the count drops 6× to ~2,800, eliminating the risk of client-side rate limiting on the kube-apiserver of a small kind cluster. |
+| 12 | On `Failed`, print last 100 Pod log lines automatically | Post-mortem doesn't require remembering the right `kubectl logs --previous` invocation — it's right there in the wrapper's exit output. |
+
+### `k6/scenarios/rotating.js`
+
+| # | Change | Why |
+|---|---|---|
+| 13 | `http_req_failed{url:hpa}: rate<0.50 → 0.95` | hackathon-four tunes HPA to ~71% utilisation; overall 23h HPA 503 rate is expected at 1-3% but a single bad transient cycle could push the windowed rate above 0.50 → k6 exits non-zero → Job Failed → no retry. 0.95 reserves the threshold purely for "fundamentally broken" failures. |
+| 14 | `http_req_duration p(95) < 3000 → 10000` | Same rationale: HPA may briefly serve queued requests at multi-second latencies during transitions. The Prometheus dashboard tells us about latency separately; we don't need k6's threshold to gate the run. |
+
+### Resilient one-liner for the full 24h demo
+
+```bash
+tmux new -d -s k6 'make k6-incluster-rotating 2>&1 | tee k6-rotating.log'
+# Walk away. Come back 23h later:
+tmux attach -t k6
+# Or just check status without attaching:
+kubectl get job k6-rotating -n demo
+kubectl logs -n demo job/k6-rotating --tail=50
+```
+
+If the Pod failed mid-run, the Pod is still around for 24h after
+terminal state:
+
+```bash
+kubectl describe job k6-rotating -n demo                  # condition + reason
+kubectl logs -n demo job/k6-rotating --previous --tail=200  # k6's last words
+kubectl get pod -n demo -l job-name=k6-rotating -o yaml | grep -A5 lastState  # OOM evidence
+```
+
+OOMKill specifically shows up as `lastState.terminated.reason: OOMKilled`
+and `exitCode: 137`. With the 2Gi limit on hackathon-four this should
+no longer occur, but the diagnostics are there if it does.
 
 ## What to watch on Grafana
 

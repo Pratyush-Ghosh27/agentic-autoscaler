@@ -50,6 +50,18 @@ spec:
             # spec.preferredForecaster: gbdt_quantile.
             - name: GBDT_MIN_POINTS
               value: "10"
+            # HACKATHON-TWO ADDITION: disable Prophet's hour_baseline
+            # regressor. The rotating-loop demo cycles every 2h28min;
+            # the hour-of-day average therefore mixes steady, ramp,
+            # spiky, and bursty traffic from different cycles. That
+            # average looks ~steady regardless of the current phase
+            # and pulls Prophet's prediction toward a flat midline
+            # exactly when the actual is mid-ramp or mid-spike.
+            # Disabling lets Prophet rely on its trend + changepoint
+            # detection from the last HOT_PATH_HISTORY_MINUTES=30 of
+            # data, which is what we want for this demo.
+            - name: PROPHET_USE_HOURLY_REGRESSOR
+              value: "false"
           resources:
             requests:
               cpu: 200m

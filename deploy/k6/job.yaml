@@ -110,6 +110,18 @@ spec:
               value: "${DIURNAL_SPIKE_RPS}"
             - name: DIURNAL_TOTAL_HOURS
               value: "${DIURNAL_TOTAL_HOURS}"
+            - name: ROTATING_CYCLES
+              value: "${ROTATING_CYCLES}"
+            - name: ROTATING_STEADY_RPS
+              value: "${ROTATING_STEADY_RPS}"
+            - name: ROTATING_RAMP_PEAK_RPS
+              value: "${ROTATING_RAMP_PEAK_RPS}"
+            - name: ROTATING_SPIKE_RPS
+              value: "${ROTATING_SPIKE_RPS}"
+            - name: ROTATING_BURSTY_FLOOR
+              value: "${ROTATING_BURSTY_FLOOR}"
+            - name: ROTATING_BURSTY_CEILING
+              value: "${ROTATING_BURSTY_CEILING}"
           resources:
             # k6 is a load generator; CPU is what it actually needs.
             # Memory is small. Numbers from the k6 author's own
@@ -144,3 +156,5 @@ spec:
                 path: scenarios/bursty.js
               - key: diurnal.js
                 path: scenarios/diurnal.js
+              - key: rotating.js
+                path: scenarios/rotating.js

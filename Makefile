@@ -382,6 +382,10 @@ k6-incluster-diurnal: ## Run the diurnal 24h scenario as an in-cluster Job (over
 k6-incluster-24h-loop: ## Replay ramp/steady/spiky/bursty round-robin until DURATION_HOURS elapses (default 24).
 	bash deploy/k6/run-24h-loop.sh
 
+.PHONY: k6-incluster-rotating
+k6-incluster-rotating: ## Hackathon-two: single-process 24h run cycling steady -> ramp -> spiky -> bursty (no inter-scenario gaps). Set ROTATING_CYCLES to change duration.
+	bash deploy/k6/run-incluster.sh rotating
+
 # Host-mode k6 targets — useful for ad-hoc single-pod debugging only.
 # `kubectl port-forward svc/X` does NOT load-balance (kubernetes/kubernetes#15180);
 # every connection pins to the same Endpoint, so any replica > 1 is
@@ -406,6 +410,10 @@ k6-bursty: ## Run the bursty k6 scenario from the host (single-pod; debug only).
 .PHONY: k6-diurnal
 k6-diurnal: ## Run the diurnal k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/diurnal.js
+
+.PHONY: k6-rotating
+k6-rotating: ## Run the rotating k6 scenario from the host (single-pod; debug only).
+	$(K6) run k6/scenarios/rotating.js
 
 # ============================================================
 ##@ Smoke + E2E

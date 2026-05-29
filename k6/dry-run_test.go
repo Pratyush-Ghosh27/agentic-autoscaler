@@ -72,6 +72,10 @@ func TestK6DryRun_Diurnal(t *testing.T) {
 	runK6Scenario(t, "scenarios/diurnal.js")
 }
 
+func TestK6DryRun_Rotating(t *testing.T) {
+	runK6Scenario(t, "scenarios/rotating.js")
+}
+
 func runK6Scenario(t *testing.T, script string) {
 	t.Helper()
 
@@ -112,6 +116,16 @@ func runK6Scenario(t *testing.T, script string) {
 		// 24 stages × ceil(0.005 * 3600 / 24) = 24 × 1s = 24s, which
 		// fits comfortably inside the 30s context timeout above.
 		"DIURNAL_TOTAL_HOURS=0.005",
+		// Rotating scenario: ROTATING_CYCLES=1 still produces 100+
+		// stages, but the dry-run path passes --vus=1 --iterations=5
+		// which overrides the executor entirely, so the test only
+		// validates the script parses + imports without errors.
+		"ROTATING_CYCLES=1",
+		"ROTATING_STEADY_RPS=2",
+		"ROTATING_RAMP_PEAK_RPS=3",
+		"ROTATING_SPIKE_RPS=3",
+		"ROTATING_BURSTY_FLOOR=1",
+		"ROTATING_BURSTY_CEILING=2",
 	)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()

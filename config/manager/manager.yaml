@@ -103,16 +103,15 @@ spec:
           # 10 -> 3: first forecast call after 3 min instead of 10
           - name: HOT_PATH_MIN_POINTS
             value: "3"
-          # 60 (code default) -> 60 (kept), bumped back from the earlier
-          # 15-min hackathon value. The 15-min window was tuned for the
-          # bursty/spiky scenarios where post-run zeros poisoned the
-          # forecaster; the diurnal + 24h soak runs need the full 60-min
-          # window so Prophet's slope estimate has enough context. With
-          # the new persistent Prometheus (PVC + 30h retention), the
-          # zero-tail problem the 15-min value was working around no
-          # longer happens — Prometheus survives between runs.
+          # HACKATHON-TWO OVERRIDE: 60 -> 30. The rotating-loop demo
+          # cycles through steady/ramp/spiky/bursty every 35 min. A
+          # 60-min hot-path window straddles two scenarios at every
+          # boundary, blurring the forecaster's view of "what pattern
+          # am I in right now?". 30 min captures most of one scenario
+          # without leaking the previous one's tail. Still well above
+          # PROPHET_MIN_POINTS=15 so Prophet engages comfortably.
           - name: HOT_PATH_HISTORY_MINUTES
-            value: "60"
+            value: "30"
           # 60 -> 30: 2x more reconcile cycles per minute. Trades a
           # small bump in Prometheus + forecast-service load for much
           # finer-grained scaling decisions.
@@ -127,26 +126,20 @@ spec:
           # 20-min scenario sees 4 classifications instead of zero.
           - name: CLASSIFIER_INTERVAL_MINUTES
             value: "5"
-          # 24 -> 25: cold-path PromQL query window. This is NOT a delay
-          # before the classifier runs — the worker still fires every
-          # CLASSIFIER_INTERVAL_MINUTES regardless. This sets how much
-          # history each invocation queries.
-          #
-          # The previous hackathon value of 1h was a hard bug: at default
-          # CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=5 the query returns at most
-          # 60/5=12 samples, but CLASSIFIER_MIN_POINTS=22 requires >=22.
-          # 12 < 22 means the classifier logged "insufficient data" on
-          # every invocation and NEVER produced output. The "Classified
-          # Pattern" panel sat at 0/Default forever.
-          #
-          # 25h gives the diurnal scenario room to see a full 24h cycle
-          # plus 1h slack. Once the cluster has been up >110 min
-          # (22 points x 5-min resolution), the classifier engages; at
-          # >12h elapsed Prophet's hourly_profile regressor also turns
-          # on; at >24h elapsed the classifier finally sees a full
-          # diurnal shape and can stamp PatternPeriodic.
+          # HACKATHON-TWO OVERRIDE: 25 -> 2. The rotating-loop demo
+          # (steady -> ramp -> spiky -> bursty, 35 min each) wants the
+          # classifier to flip patterns within each scenario, not
+          # average across many cycles. 25h would let the classifier
+          # see ~10 cycles of mixed patterns and stamp PatternSpiky or
+          # PatternDefault permanently. 2h covers ~one full 2h28min
+          # cycle while keeping enough samples to satisfy the floor:
+          # at default CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=5 the query
+          # returns 2*60/5 = 24 samples, just above the 22-point
+          # CLASSIFIER_MIN_POINTS floor. PROPHET_USE_HOURLY_REGRESSOR
+          # is also turned off (see forecast-service.yaml) since a
+          # 2.5h cycle doesn't align with hour-of-day either.
           - name: CLASSIFIER_HISTORY_HOURS
-            value: "25"
+            value: "2"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

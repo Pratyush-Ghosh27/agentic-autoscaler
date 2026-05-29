@@ -29,10 +29,10 @@
 # -----------------------------------------------------------------------
 set -euo pipefail
 
-SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal>}"
+SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal|rotating>}"
 case "$SCENARIO" in
-  ramp|steady|spiky|bursty|diurnal) ;;
-  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal)"; exit 2 ;;
+  ramp|steady|spiky|bursty|diurnal|rotating) ;;
+  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal|rotating)"; exit 2 ;;
 esac
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -89,17 +89,32 @@ export DIURNAL_BASE_RPS="${DIURNAL_BASE_RPS:-20}"
 export DIURNAL_PEAK_RPS="${DIURNAL_PEAK_RPS:-300}"
 export DIURNAL_SPIKE_RPS="${DIURNAL_SPIKE_RPS:-500}"
 export DIURNAL_TOTAL_HOURS="${DIURNAL_TOTAL_HOURS:-24}"
+# Rotating scenario tunables (hackathon-two-branch addition).
+export ROTATING_CYCLES="${ROTATING_CYCLES:-10}"
+export ROTATING_STEADY_RPS="${ROTATING_STEADY_RPS:-100}"
+export ROTATING_RAMP_PEAK_RPS="${ROTATING_RAMP_PEAK_RPS:-200}"
+export ROTATING_SPIKE_RPS="${ROTATING_SPIKE_RPS:-200}"
+export ROTATING_BURSTY_FLOOR="${ROTATING_BURSTY_FLOOR:-60}"
+export ROTATING_BURSTY_CEILING="${ROTATING_BURSTY_CEILING:-140}"
 
-# Per-scenario default timeout. Diurnal can run up to 24h by default, so
-# its ceiling derives from DIURNAL_TOTAL_HOURS (+1h slack for image pull,
-# Pod schedule, k6 startup, ConfigMap reload, and the polling interval).
+# Per-scenario default timeout. Long-running scenarios derive their
+# ceiling from the relevant tunable (+1h slack for image pull, Pod
+# schedule, k6 startup, ConfigMap reload, and the polling interval).
 # All other scenarios keep the legacy 1h ceiling.
-if [ "$SCENARIO" = "diurnal" ]; then
-    DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${DIURNAL_TOTAL_HOURS} * 3600 + 3600 }")"
-    TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
-else
-    TIMEOUT="${K6_TIMEOUT:-3600s}"
-fi
+case "$SCENARIO" in
+  diurnal)
+      DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${DIURNAL_TOTAL_HOURS} * 3600 + 3600 }")"
+      TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
+      ;;
+  rotating)
+      # ROTATING_CYCLES * 140 min per cycle * 60 s/min + 1h slack.
+      DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${ROTATING_CYCLES} * 140 * 60 + 3600 }")"
+      TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
+      ;;
+  *)
+      TIMEOUT="${K6_TIMEOUT:-3600s}"
+      ;;
+esac
 
 # envsubst whitelist: only substitute the variables we explicitly pass
 # in. Without the whitelist, envsubst would also clobber the in-pod
@@ -110,7 +125,7 @@ fi
 # whitelist arg expects literal `$VAR` tokens, not their expanded
 # values. shellcheck SC2016 is a false positive here.
 # shellcheck disable=SC2016
-ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS'
+ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS $ROTATING_CYCLES $ROTATING_STEADY_RPS $ROTATING_RAMP_PEAK_RPS $ROTATING_SPIKE_RPS $ROTATING_BURSTY_FLOOR $ROTATING_BURSTY_CEILING'
 
 # Re-create the ConfigMap on every run so script changes are picked up
 # without a separate sync step. `--dry-run=client -o yaml | apply -f -`
@@ -124,6 +139,7 @@ kubectl create configmap k6-scripts \
     --from-file="${ROOT_DIR}/k6/scenarios/spiky.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/bursty.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/diurnal.js" \
+    --from-file="${ROOT_DIR}/k6/scenarios/rotating.js" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 # Delete any prior Job of the same name. Job specs are immutable on

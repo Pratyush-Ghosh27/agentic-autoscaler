@@ -19,7 +19,14 @@ spec:
     kind: Deployment
     name: app-agentic
   minReplicas: 2
-  maxReplicas: 10
+  # HACKATHON OVERRIDE: 10 -> 20. The diurnal scenario peaks at
+  # SPIKE=500 RPS during the lunch and PM spikes; with rpsPerPodMax=30
+  # that needs ceil(500/30)=17 pods. The previous 10-pod cap saturated
+  # BOTH scalers identically at the spike minutes, erasing AAS's
+  # predictive advantage exactly when the demo most needs to show it.
+  # Kept in lock-step with hpa.yaml so the comparison stays apples-to-
+  # apples on the bound. To restore production defaults: drop back to 10.
+  maxReplicas: 20
   # rpsPerPodMin/Max bracket the rps_per_pod target the classifier may
   # converge on. They are jointly tuned with target-*.yaml's
   # TARGET_CONCURRENCY=8 (per-pod capacity ~70 RPS) and hpa.yaml's
@@ -43,4 +50,11 @@ spec:
   # gbdt_quantile; that forecaster is opt-in only. Pin it explicitly when
   # the workload has bursty / spike behaviour that quantile bands handle
   # better than Prophet's seasonality model.
-  # preferredForecaster: auto
+  # HACKATHON OVERRIDE: pinned to prophet (was unset/auto). Diurnal has
+  # clear seasonality and after 12h elapsed Prophet's hourly_profile
+  # regressor engages, giving it a meaningful edge over linear_extrap.
+  # Pinning avoids the classifier flapping to linear_extrap during the
+  # first few hours when the partial window looks flat. Once the
+  # demo concludes, revert to "auto" (or delete the line) for
+  # workload-agnostic operation.
+  preferredForecaster: prophet

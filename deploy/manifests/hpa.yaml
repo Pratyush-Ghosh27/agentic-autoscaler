@@ -33,7 +33,11 @@ spec:
     kind: Deployment
     name: app-hpa
   minReplicas: 2
-  maxReplicas: 10
+  # HACKATHON OVERRIDE: 10 -> 20. Kept in lock-step with
+  # agenticautoscaler-sample.yaml so the AAS vs HPA comparison stays
+  # apples-to-apples on the upper bound. See that file for the
+  # diurnal SPIKE=500 / rpsPerPodMax=30 -> 17-pod-min math.
+  maxReplicas: 20
   metrics:
     - type: Pods
       pods:

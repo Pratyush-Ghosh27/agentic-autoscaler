@@ -26,6 +26,11 @@ HACKATHON-marked blocks in the four files listed below.
 4. **Data retention.** Make Prometheus survive pod restarts and keep
    enough history to review a 24-hour soak the next morning. See
    "Data retention changes" below.
+5. **Diurnal-readiness.** Lift the caps and windows that prevented the
+   24h diurnal scenario from producing a useful comparison (replica
+   ceiling too low for spikes, classifier query window shorter than
+   the cycle period, forecaster history too narrow for gradual day-
+   shape). See "Diurnal-readiness changes" below.
 
 ## Complete table of changes
 
@@ -46,6 +51,10 @@ HACKATHON-marked blocks in the four files listed below.
 | 13 | `prometheus.prometheusSpec.retention` | [`deploy/helm/prometheus-values.yaml`](../../deploy/helm/prometheus-values.yaml) | `2h` | **`30h`** | Data retention | The 2h default silently deleted yesterday's Grafana panels and would make any multi-hour soak unreviewable. 30h covers a full 24h run + 6h slack for next-morning review. |
 | 14 | `prometheus.prometheusSpec.storageSpec` | [`deploy/helm/prometheus-values.yaml`](../../deploy/helm/prometheus-values.yaml) | `{}` (emptyDir) | **5Gi PVC on `standard` storageClass** | Data retention | emptyDir was wiped on every Prometheus pod restart (OOM, kind restart, helm upgrade) — the single most common cause of vanished panels. Kind's bundled local-path-provisioner makes a real PVC zero-config. |
 | 15 | `prometheus.prometheusSpec.resources.limits.memory` | [`deploy/helm/prometheus-values.yaml`](../../deploy/helm/prometheus-values.yaml) | `1Gi` | **`2Gi`** | Data retention | 30h of retained data + the working set for Grafana queries OOM-killed the pod at 1Gi (the *other* way data disappeared). Request also bumped from 512Mi -> 1Gi. |
+| 16 | `HOT_PATH_HISTORY_MINUTES` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `15` (earlier hackathon value) | **`60`** | Diurnal-readiness | The 15-min window was tuned for short bursty/spiky scenarios where post-run zeros poisoned the forecaster. With Prometheus now persistent (#13–#15), that failure mode is gone — and the diurnal scenario needs the full 60-min window so Prophet's slope estimate has enough context to track gradual day-shape transitions. |
+| 17 | `CLASSIFIER_HISTORY_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `1` (earlier hackathon value) | **`25`** | Diurnal-readiness | **Was a hard bug at `1`:** at default resolution=5min the query returned max 12 samples while `CLASSIFIER_MIN_POINTS=22` required ≥22, so the classifier logged "insufficient data" forever and never produced output. `25` lets the diurnal scenario see a full 24h cycle + 1h slack. Classifier still first engages at ~110 min elapsed regardless of this value. |
+| 18 | `spec.maxReplicas` | [`deploy/manifests/agenticautoscaler-sample.yaml`](../../deploy/manifests/agenticautoscaler-sample.yaml) and [`deploy/manifests/hpa.yaml`](../../deploy/manifests/hpa.yaml) | `10` | **`20`** | Diurnal-readiness | Diurnal SPIKE=500 RPS ÷ `rpsPerPodMax=30` = 17 pods minimum. The 10-cap saturated BOTH scalers identically during the lunch and PM spikes, erasing AAS's predictive advantage exactly when the demo needs to show it. Bumped on both CRs in lock-step so the bound stays symmetric. |
+| 19 | `spec.preferredForecaster` | [`deploy/manifests/agenticautoscaler-sample.yaml`](../../deploy/manifests/agenticautoscaler-sample.yaml) | unset (= `auto`) | **`prophet`** | Diurnal-readiness | Diurnal has clear seasonality; after 12h elapsed Prophet's `hourly_profile` regressor engages and dominates linear_extrap on SMAPE. Pinning avoids the classifier flapping to linear during early hours when the partial window looks flat. |
 
 ## Grouped by category
 
@@ -116,6 +125,23 @@ recreates the Prometheus StatefulSet and binds a fresh PVC; the existing
 metrics inside the emptyDir are lost on this one-time transition (you
 already have nothing older than 2h anyway).
 
+### Diurnal-readiness changes (#16, #17, #18, #19)
+
+These four changes turn the 24h diurnal scenario from "won't work at
+all" into "produces a clean SMAPE comparison":
+
+| Without these | With these |
+|---|---|
+| Classifier never engages (12-sample query, 22-sample floor → permanent "insufficient data") | Classifier engages at ~110 min elapsed and produces real `Classified Pattern` output through the full 24h |
+| Both scalers hit `maxReplicas=10` at the lunch + PM spikes; comparison flatlines | Both have 20-pod ceiling, 3 pods of headroom above the 17-pod spike minimum, so each can actually choose its replica count |
+| Forecaster sees only 15-min window; misses the gradual day-shape slope | Forecaster sees 60-min context, tracks the slope of each hourly stage cleanly |
+| Classifier may flap between `PatternFlat` / `PatternGradualRamp` in early hours; forecaster choice oscillates | Prophet is pinned; once `HOURLY_PROFILE_MIN_HOURS=12` elapses, the `hour_baseline` regressor kicks in and SMAPE drops further |
+
+Note that with `CLASSIFIER_HISTORY_HOURS=25` the cluster effectively needs
+~24h of uptime before the classifier sees enough history to identify
+"diurnal" specifically — earlier classifications may stamp other
+patterns. This is correct behaviour, not a bug.
+
 ## How to apply this branch to a running cluster
 
 ```bash
@@ -130,6 +156,10 @@ kubectl -n demo get aas app-agentic -o jsonpath='{.spec.rpsPerPodMin}/{.spec.rps
 # expect: 30/30
 kubectl -n demo get hpa app-hpa -o jsonpath='{.spec.behavior.scaleDown.policies[0].value}{"\n"}'
 # expect: 4
+kubectl -n demo get aas app-agentic -o jsonpath='{.spec.maxReplicas}/{.spec.preferredForecaster}{"\n"}'
+# expect: 20/prophet
+kubectl -n demo get hpa app-hpa -o jsonpath='{.spec.maxReplicas}{"\n"}'
+# expect: 20
 kubectl -n monitoring get prometheus -o jsonpath='{.items[0].spec.retention}{"\n"}'
 # expect: 30h
 kubectl -n monitoring get pvc -l app.kubernetes.io/name=prometheus

@@ -39,6 +39,22 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 NS="${K6_NAMESPACE:-demo}"
 JOB_NAME="k6-${SCENARIO}"
 
+# Long-running scenarios — the ones that take >1h and where accidental
+# wrapper termination is the most common reason a 23h run "disappears".
+# For these we default to NOT trapping signals so a Ctrl-C, terminal
+# close (SIGHUP), or ssh disconnect leaves the in-cluster Job running
+# untouched. Short scenarios keep the original trap-and-delete
+# behaviour because their failure mode is "user changed their mind
+# mid-experiment and wants the load to stop immediately".
+#
+# Override either direction with K6_NO_TRAP=1 (force no-trap) or
+# K6_NO_TRAP=0 (force trap).
+case "$SCENARIO" in
+  diurnal|rotating) DEFAULT_NO_TRAP=1 ;;
+  *)                DEFAULT_NO_TRAP=0 ;;
+esac
+NO_TRAP="${K6_NO_TRAP:-${DEFAULT_NO_TRAP}}"
+
 # Trap SIGINT/SIGTERM so Ctrl-C from a developer streaming logs does the
 # obvious thing — tear down the in-cluster Job — instead of leaving it
 # running. Without this, an interrupted `make k6-incluster-ramp` exits
@@ -52,7 +68,22 @@ cleanup_on_signal() {
     kubectl delete job "${JOB_NAME}" -n "$NS" --ignore-not-found --wait=false || true
     exit 130
 }
-trap cleanup_on_signal INT TERM
+detach_on_signal() {
+    # Long-run mode: exit the wrapper but leave the Job running.
+    # User can re-attach with `kubectl logs -f -n demo job/${JOB_NAME}`
+    # or monitor with `kubectl get job ${JOB_NAME} -n ${NS} -w`.
+    echo ""
+    echo "==> wrapper detaching (signal received); Job/${JOB_NAME} continues running"
+    echo "    re-attach logs:  kubectl logs -f -n ${NS} job/${JOB_NAME}"
+    echo "    monitor status:  kubectl get job ${JOB_NAME} -n ${NS} -w"
+    echo "    stop the run:    kubectl delete job ${JOB_NAME} -n ${NS}"
+    exit 130
+}
+if [ "$NO_TRAP" = "1" ]; then
+    trap detach_on_signal INT TERM HUP
+else
+    trap cleanup_on_signal INT TERM
+fi
 # 60 min covers the longest currently-defined scenario (sustained =
 # 5m up + 30m hold + 5m down = 40m of k6, plus Pod schedule + image
 # pull + finalisation overhead). The previous 30m default would silently
@@ -171,13 +202,55 @@ kubectl delete job "${JOB_NAME}" -n "$NS" --ignore-not-found --wait=true
 echo "==> applying Job/${JOB_NAME}"
 envsubst "$ENVSUBST_VARS" < "${ROOT_DIR}/deploy/k6/job.yaml" | kubectl apply -f -
 
+# For long-running scenarios, surface the survive-disconnect contract
+# loudly. The most common cause of "the 23h run disappeared overnight"
+# is the user starting the wrapper in an interactive shell, then
+# closing the terminal / suspending the laptop, which SIGHUPs the
+# wrapper. With NO_TRAP=1 (the long-scenario default) the Job survives
+# this, but only if the user knows it does — otherwise they'll
+# `kubectl delete` defensively. Print the resume instructions before
+# the Pod even starts so they can be captured by `script` or screenshot.
+case "$SCENARIO" in
+  diurnal|rotating)
+    cat <<EOF
+==> LONG-RUNNING SCENARIO (${SCENARIO}, expected duration > 1h)
+
+This wrapper will NOT delete the in-cluster Job if interrupted (Ctrl-C,
+terminal close, or SSH disconnect). The Job keeps running until k6
+finishes, fails, or you explicitly delete it.
+
+Recommended: launch this command under tmux or nohup so the polling
+loop survives terminal close:
+
+    tmux new -s k6 "make k6-incluster-${SCENARIO}"
+    # OR
+    nohup make k6-incluster-${SCENARIO} > k6-${SCENARIO}.log 2>&1 &
+
+If you forget and Ctrl-C / disconnect anyway, the Job is still running.
+Re-attach with:
+
+    kubectl logs -f -n ${NS} job/${JOB_NAME}
+    kubectl get job ${JOB_NAME} -n ${NS} -w
+    kubectl describe job ${JOB_NAME} -n ${NS}
+
+To override and force trap-and-delete behaviour: K6_NO_TRAP=0 make ...
+
+EOF
+    ;;
+esac
+
 # Stream the Pod's logs from the moment it starts running. `wait` on
 # `condition=Ready` for the Pod (Job conditions don't fire until the
 # Pod terminates), then follow logs. Log streaming exits when the
 # container terminates.
+#
+# 300s wait covers cold image pulls on slow connections (grafana/k6
+# is ~140MB compressed) — the previous 120s ceiling failed on a fresh
+# kind cluster the first time each day, even though the Pod itself
+# would have come up healthy ~30s later.
 echo "==> waiting for k6 pod to start"
 kubectl wait --for=condition=Ready pod \
-    -n "$NS" -l "job-name=${JOB_NAME}" --timeout=120s
+    -n "$NS" -l "job-name=${JOB_NAME}" --timeout=300s
 
 echo "==> streaming k6 logs"
 kubectl logs -n "$NS" -l "job-name=${JOB_NAME}" -f --tail=-1 || true
@@ -208,6 +281,17 @@ echo "==> waiting for Job/${JOB_NAME} to finish (timeout ${TIMEOUT})"
 # evaluation below rather than silently misbehave.
 TIMEOUT_SECONDS="${TIMEOUT%s}"
 DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
+# Poll interval: 5s is fine for the 1h scenarios (~720 API calls), but
+# the 24h scenarios would generate ~17,000 API calls — enough to trip
+# kube-apiserver client-side rate limiting on a small kind cluster and
+# delay the actual job-status read. 30s for long scenarios cuts that
+# to ~2,800 calls with no meaningful loss of detection latency (k6 is
+# emitting metrics every second; an extra 25s to notice the Job
+# finished doesn't matter on a 23h run).
+case "$SCENARIO" in
+  diurnal|rotating) POLL_INTERVAL=30 ;;
+  *)                POLL_INTERVAL=5  ;;
+esac
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     SUCCEEDED="$(kubectl get "job/${JOB_NAME}" -n "$NS" \
         -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")"
@@ -220,9 +304,16 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     if [ "$FAILED" = "1" ]; then
         echo "k6 ${SCENARIO} failed (Job/${JOB_NAME} .status.failed=1)" >&2
         kubectl describe "job/${JOB_NAME}" -n "$NS" | tail -30
+        # Post-mortem helper: print the Pod's last 100 log lines if
+        # the Pod is still around (ttlSecondsAfterFinished=86400 in
+        # the Job template keeps it alive for 24h, so this almost
+        # always succeeds for hackathon-four onwards).
+        echo ""
+        echo "==> Pod logs (last 100 lines):"
+        kubectl logs -n "$NS" -l "job-name=${JOB_NAME}" --tail=100 || true
         exit 1
     fi
-    sleep 5
+    sleep "$POLL_INTERVAL"
 done
 echo "k6 ${SCENARIO} did not reach a terminal state within ${TIMEOUT}" >&2
 kubectl describe "job/${JOB_NAME}" -n "$NS" | tail -30

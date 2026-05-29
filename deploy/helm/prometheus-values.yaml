@@ -1,8 +1,10 @@
 ---
 # kube-prometheus-stack values tuned for a single-developer kind cluster.
-# Heavy components disabled so the stack fits in ~1.5 GB. Production values
-# (alertmanager + node-exporter + persistence) are out of scope for this
-# project — the goal is reproducible local + CI runs, not a fleet rollout.
+# Heavy components (alertmanager, node-exporter) are disabled so the stack
+# fits in ~2 GB. Prometheus uses a small PVC and 30h retention so multi-
+# hour scenario runs remain reviewable the next morning — see the
+# `prometheus.prometheusSpec` block below. The goal is reproducible local
+# + CI runs that survive a kind node restart, not a fleet rollout.
 
 alertmanager:
   enabled: false
@@ -55,13 +57,43 @@ grafana:
 
 prometheus:
   prometheusSpec:
-    retention: 2h
+    # 30h retention so multi-hour scenarios (k6 ramp/steady/spiky/bursty)
+    # and overnight soak runs remain reviewable the next morning. The
+    # previous 2h value silently deleted everything older than two hours
+    # regardless of pod state — a 25-min ramp recorded at 9 PM was gone
+    # by 11 PM, and any post-run debugging had to be done within the
+    # 2-hour window or not at all. 30h also gives the classifier and
+    # Prophet's `hourly_profile` regressor (HOURLY_PROFILE_MIN_HOURS=12)
+    # enough wall-clock history to actually engage.
+    retention: 30h
     resources:
       requests:
-        memory: 512Mi
-      limits:
         memory: 1Gi
-    storageSpec: {}
+      limits:
+        # 2Gi to comfortably hold ~30h of this stack's metric volume
+        # plus Grafana's query working set. The previous 1Gi limit OOM-
+        # killed the pod under sustained Grafana traffic on long runs,
+        # which combined with the emptyDir below (now fixed) was a
+        # second silent way historical data disappeared.
+        memory: 2Gi
+    # PVC-backed storage so Prometheus pod restarts (OOMKills, kind node
+    # restarts, helm upgrades, kubelet evictions) no longer wipe the
+    # TSDB. The previous `storageSpec: {}` resolved to an emptyDir, which
+    # is the single most common cause of "where did yesterday's Grafana
+    # data go?". Kind ships with `local-path-provisioner` and a default
+    # `standard` storageClass (auto-installed by `kind create cluster`),
+    # so this is zero-config on the project's reference cluster. 5Gi is
+    # ~25-50x headroom for the workload's metric volume at 30h retention;
+    # the PVC binds lazily so it costs nothing on disk until Prometheus
+    # writes to it.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: standard
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
     # By default kube-prometheus-stack only picks up PodMonitors and
     # ServiceMonitors that carry the `release: kube-prom` label and live
     # in the chart's namespace. We deliberately want target-app pods in

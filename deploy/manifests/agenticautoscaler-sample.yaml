@@ -39,10 +39,21 @@ spec:
   # HACKATHON OVERRIDE: locked to match HPA's averageValue=30 so the
   # AAS divisor matches HPA's exactly (1:1 replica math). Strips the
   # classifier's 3x early-scale advantage so the only remaining
-  # difference between scalers is the forecast lookahead. To restore
-  # production defaults: drop rpsPerPodMin back to 10.
+  # difference between scalers is the forecast lookahead.
+  #
+  # Why 30/31 and not 30/30: the validating webhook
+  # (internal/webhook/v1alpha1/validator.go) enforces strict
+  # `rpsPerPodMin < rpsPerPodMax` (the midpoint formula
+  # `(min+max)/2` and the rpsPerPod clamp need a non-empty interval).
+  # 30/31 is the tightest validator-legal pin to HPA's
+  # averageValue=30. Replica math is identical at 30 vs 31 for every
+  # RPS level the demo hits (100, 200, 250, 300, 500): ceil(N/30) ==
+  # ceil(N/31) at all of those.
+  #
+  # To restore production defaults: drop rpsPerPodMin back to 10 and
+  # rpsPerPodMax to whatever the workload needs.
   rpsPerPodMin: 30
-  rpsPerPodMax: 30
+  rpsPerPodMax: 31
   # preferredForecaster pins which forecaster the hot path uses. Leave
   # unset (or "auto") to defer to the classifier — recommended for most
   # workloads. The CRD enum is: prophet | linear_extrap | gbdt_quantile |

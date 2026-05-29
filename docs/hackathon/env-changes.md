@@ -36,7 +36,7 @@ HACKATHON-marked blocks in the four files listed below.
 
 | # | Variable | File | `main` value | `hackathon` value | Category | Reason |
 |---|---|---|---|---|---|---|
-| 1 | `spec.rpsPerPodMin` | [`deploy/manifests/agenticautoscaler-sample.yaml`](../../deploy/manifests/agenticautoscaler-sample.yaml) | `10` | **`30`** | Fairness | Locks AAS divisor to match HPA's `averageValue=30`. Strips the classifier's 3x early-scale latitude so replica math is identical between the two scalers. |
+| 1 | `spec.rpsPerPodMin` / `spec.rpsPerPodMax` | [`deploy/manifests/agenticautoscaler-sample.yaml`](../../deploy/manifests/agenticautoscaler-sample.yaml) | `10` / `30` | **`30` / `31`** | Fairness | Locks AAS divisor to match HPA's `averageValue=30`. Strips the classifier's 3x early-scale latitude so replica math is identical between the two scalers. **Why 30/31 and not 30/30:** the validating webhook enforces strict `rpsPerPodMin < rpsPerPodMax`. 30/31 is the tightest validator-legal pin — `ceil(N/30) == ceil(N/31)` for every RPS the demo hits (100, 200, 250, 300, 500), so functionally identical to "locked to 30". |
 | 2 | `behavior.scaleDown.policies[0].value` | [`deploy/manifests/hpa.yaml`](../../deploy/manifests/hpa.yaml) | `2` | **`4`** | Fairness | Matches AAS's `DEFAULT_MAX_STEP_SIZE=4` (which applies symmetrically up + down). Previous mismatch let AAS scale *down* twice as fast, biasing replica counts and cost comparisons. |
 | 3 | `FORECAST_HORIZON_MINUTES` | [`deploy/manifests/forecast-service.yaml`](../../deploy/manifests/forecast-service.yaml) | `10` | **`5`** | Forecast accuracy | Halves forecast-vs-actual error (autocorrelation decays with horizon). System still has ~4 min of headroom for pod startup + cooldowns. |
 | 4 | `PROPHET_MIN_POINTS` | [`deploy/manifests/forecast-service.yaml`](../../deploy/manifests/forecast-service.yaml) | `60` (legacy v1 value, code default is 30) | **`15`** | Responsiveness | Auto-dispatch path switches to Prophet at ~15 min instead of ~60. Most of a 25-min k6 scenario now uses Prophet, not linear_extrap. |
@@ -65,8 +65,8 @@ forecast lookahead as the remaining difference. After these changes
 the comparison becomes:
 
 - Same workload (byte-identical pods, paired k6 traffic)
-- Same replica bounds (min=2, max=10)
-- **Same per-pod RPS target (30)** ← change #1
+- Same replica bounds (min=2, max=20 — see change #18)
+- **Same per-pod RPS target (30, with rpsPerPodMax=31 for webhook compliance — see change #1)** ← change #1
 - **Same scale-up and scale-down speed (+4/-4)** ← change #2
 - Same metric source (`http_requests_total`)
 - HPA: reactive only; AAS: 5-minute forecast lookahead ← *the only remaining asymmetry*
@@ -153,7 +153,7 @@ make install-deps
 make deploy
 # Verify all overrides took effect:
 kubectl -n demo get aas app-agentic -o jsonpath='{.spec.rpsPerPodMin}/{.spec.rpsPerPodMax}{"\n"}'
-# expect: 30/30
+# expect: 30/31  (30/30 would be webhook-rejected — see change #1)
 kubectl -n demo get hpa app-hpa -o jsonpath='{.spec.behavior.scaleDown.policies[0].value}{"\n"}'
 # expect: 4
 kubectl -n demo get aas app-agentic -o jsonpath='{.spec.maxReplicas}/{.spec.preferredForecaster}{"\n"}'

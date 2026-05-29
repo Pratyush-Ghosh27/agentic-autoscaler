@@ -374,6 +374,14 @@ k6-incluster-spiky: ## Run the spiky k6 scenario as an in-cluster Job.
 k6-incluster-bursty: ## Run the bursty k6 scenario as an in-cluster Job.
 	bash deploy/k6/run-incluster.sh bursty
 
+.PHONY: k6-incluster-diurnal
+k6-incluster-diurnal: ## Run the diurnal 24h scenario as an in-cluster Job (override DIURNAL_TOTAL_HOURS for shorter cycles).
+	bash deploy/k6/run-incluster.sh diurnal
+
+.PHONY: k6-incluster-24h-loop
+k6-incluster-24h-loop: ## Replay ramp/steady/spiky/bursty round-robin until DURATION_HOURS elapses (default 24).
+	bash deploy/k6/run-24h-loop.sh
+
 # Host-mode k6 targets — useful for ad-hoc single-pod debugging only.
 # `kubectl port-forward svc/X` does NOT load-balance (kubernetes/kubernetes#15180);
 # every connection pins to the same Endpoint, so any replica > 1 is
@@ -394,6 +402,10 @@ k6-spiky: ## Run the spiky k6 scenario from the host (single-pod; debug only).
 .PHONY: k6-bursty
 k6-bursty: ## Run the bursty k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/bursty.js
+
+.PHONY: k6-diurnal
+k6-diurnal: ## Run the diurnal k6 scenario from the host (single-pod; debug only).
+	$(K6) run k6/scenarios/diurnal.js
 
 # ============================================================
 ##@ Smoke + E2E

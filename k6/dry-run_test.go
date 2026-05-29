@@ -68,6 +68,10 @@ func TestK6DryRun_Bursty(t *testing.T) {
 	runK6Scenario(t, "scenarios/bursty.js")
 }
 
+func TestK6DryRun_Diurnal(t *testing.T) {
+	runK6Scenario(t, "scenarios/diurnal.js")
+}
+
 func runK6Scenario(t *testing.T, script string) {
 	t.Helper()
 
@@ -102,6 +106,12 @@ func runK6Scenario(t *testing.T, script string) {
 		"BURST_MAX_INTERVAL=2",
 		"BURSTY_TOTAL_DURATION=5s",
 		"BURSTY_ITERATIONS=5",
+		"DIURNAL_BASE_RPS=1",
+		"DIURNAL_PEAK_RPS=2",
+		"DIURNAL_SPIKE_RPS=2",
+		// 24 stages × ceil(0.005 * 3600 / 24) = 24 × 1s = 24s, which
+		// fits comfortably inside the 30s context timeout above.
+		"DIURNAL_TOTAL_HOURS=0.005",
 	)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()

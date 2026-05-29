@@ -29,10 +29,10 @@
 # -----------------------------------------------------------------------
 set -euo pipefail
 
-SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty>}"
+SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal>}"
 case "$SCENARIO" in
-  ramp|steady|spiky|bursty) ;;
-  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty)"; exit 2 ;;
+  ramp|steady|spiky|bursty|diurnal) ;;
+  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal)"; exit 2 ;;
 esac
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -61,7 +61,8 @@ trap cleanup_on_signal INT TERM
 # failed. `kubectl wait` returns as soon as the Job condition transitions
 # to complete, so this is a ceiling not a floor; shorter scenarios still
 # finish in their own k6-script-driven duration.
-TIMEOUT="${K6_TIMEOUT:-3600s}"
+# Computed *after* the per-scenario tunables below are exported, so the
+# diurnal scenario can derive its ceiling from DIURNAL_TOTAL_HOURS.
 
 # Tunable defaults — kept in sync with k6/README.md. envsubst doesn't
 # understand shell `${VAR:-default}` syntax, so this is the only place
@@ -83,6 +84,22 @@ export BURST_MIN_INTERVAL="${BURST_MIN_INTERVAL:-5}"
 export BURST_MAX_INTERVAL="${BURST_MAX_INTERVAL:-30}"
 export BURSTY_TOTAL_DURATION="${BURSTY_TOTAL_DURATION:-15m}"
 export BURSTY_ITERATIONS="${BURSTY_ITERATIONS:-10000}"
+# Diurnal scenario tunables (hackathon-branch addition).
+export DIURNAL_BASE_RPS="${DIURNAL_BASE_RPS:-20}"
+export DIURNAL_PEAK_RPS="${DIURNAL_PEAK_RPS:-300}"
+export DIURNAL_SPIKE_RPS="${DIURNAL_SPIKE_RPS:-500}"
+export DIURNAL_TOTAL_HOURS="${DIURNAL_TOTAL_HOURS:-24}"
+
+# Per-scenario default timeout. Diurnal can run up to 24h by default, so
+# its ceiling derives from DIURNAL_TOTAL_HOURS (+1h slack for image pull,
+# Pod schedule, k6 startup, ConfigMap reload, and the polling interval).
+# All other scenarios keep the legacy 1h ceiling.
+if [ "$SCENARIO" = "diurnal" ]; then
+    DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${DIURNAL_TOTAL_HOURS} * 3600 + 3600 }")"
+    TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
+else
+    TIMEOUT="${K6_TIMEOUT:-3600s}"
+fi
 
 # envsubst whitelist: only substitute the variables we explicitly pass
 # in. Without the whitelist, envsubst would also clobber the in-pod
@@ -93,7 +110,7 @@ export BURSTY_ITERATIONS="${BURSTY_ITERATIONS:-10000}"
 # whitelist arg expects literal `$VAR` tokens, not their expanded
 # values. shellcheck SC2016 is a false positive here.
 # shellcheck disable=SC2016
-ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS'
+ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS'
 
 # Re-create the ConfigMap on every run so script changes are picked up
 # without a separate sync step. `--dry-run=client -o yaml | apply -f -`
@@ -106,6 +123,7 @@ kubectl create configmap k6-scripts \
     --from-file="${ROOT_DIR}/k6/scenarios/steady.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/spiky.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/bursty.js" \
+    --from-file="${ROOT_DIR}/k6/scenarios/diurnal.js" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 # Delete any prior Job of the same name. Job specs are immutable on

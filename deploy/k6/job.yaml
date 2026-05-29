@@ -102,6 +102,14 @@ spec:
               value: "${BURSTY_TOTAL_DURATION}"
             - name: BURSTY_ITERATIONS
               value: "${BURSTY_ITERATIONS}"
+            - name: DIURNAL_BASE_RPS
+              value: "${DIURNAL_BASE_RPS}"
+            - name: DIURNAL_PEAK_RPS
+              value: "${DIURNAL_PEAK_RPS}"
+            - name: DIURNAL_SPIKE_RPS
+              value: "${DIURNAL_SPIKE_RPS}"
+            - name: DIURNAL_TOTAL_HOURS
+              value: "${DIURNAL_TOTAL_HOURS}"
           resources:
             # k6 is a load generator; CPU is what it actually needs.
             # Memory is small. Numbers from the k6 author's own
@@ -134,3 +142,5 @@ spec:
                 path: scenarios/spiky.js
               - key: bursty.js
                 path: scenarios/bursty.js
+              - key: diurnal.js
+                path: scenarios/diurnal.js

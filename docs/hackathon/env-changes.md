@@ -23,6 +23,9 @@ HACKATHON-marked blocks in the four files listed below.
    extrapolator window so the predicted vs actual lines track each
    other more tightly on the dashboard. See "Forecast accuracy
    changes" below.
+4. **Data retention.** Make Prometheus survive pod restarts and keep
+   enough history to review a 24-hour soak the next morning. See
+   "Data retention changes" below.
 
 ## Complete table of changes
 
@@ -40,6 +43,9 @@ HACKATHON-marked blocks in the four files listed below.
 | 10 | `CLASSIFIER_MIN_POINTS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | unset (code default `72`) | **`22`** | Responsiveness | First pattern classification arrives at ~22 min instead of ~72. **22 is the hard floor** at default `CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=5` (formula: `60/resolution + 10`). Anything lower is rejected at controller startup. |
 | 11 | `CLASSIFIER_INTERVAL_MINUTES` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | unset (code default `30`) | **`5`** | Responsiveness | Classifier worker re-runs 6x more often. A 20-min scenario now sees 4 classifications instead of zero. |
 | 12 | `CLASSIFIER_HISTORY_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | unset (code default `24`) | **`1`** | Responsiveness | Cold-path PromQL window. A fresh demo never has 24h of real data; 1h confines the classifier's feature math to actual values, not zeros. |
+| 13 | `prometheus.prometheusSpec.retention` | [`deploy/helm/prometheus-values.yaml`](../../deploy/helm/prometheus-values.yaml) | `2h` | **`30h`** | Data retention | The 2h default silently deleted yesterday's Grafana panels and would make any multi-hour soak unreviewable. 30h covers a full 24h run + 6h slack for next-morning review. |
+| 14 | `prometheus.prometheusSpec.storageSpec` | [`deploy/helm/prometheus-values.yaml`](../../deploy/helm/prometheus-values.yaml) | `{}` (emptyDir) | **5Gi PVC on `standard` storageClass** | Data retention | emptyDir was wiped on every Prometheus pod restart (OOM, kind restart, helm upgrade) — the single most common cause of vanished panels. Kind's bundled local-path-provisioner makes a real PVC zero-config. |
+| 15 | `prometheus.prometheusSpec.resources.limits.memory` | [`deploy/helm/prometheus-values.yaml`](../../deploy/helm/prometheus-values.yaml) | `1Gi` | **`2Gi`** | Data retention | 30h of retained data + the working set for Grafana queries OOM-killed the pod at 1Gi (the *other* way data disappeared). Request also bumped from 512Mi -> 1Gi. |
 
 ## Grouped by category
 
@@ -90,16 +96,44 @@ Expected SMAPE improvement vs `main`:
 - Ramp: 10-20% -> 5-10%
 - Spiky: 25-40% -> 15-25%
 
+### Data retention changes (#13, #14, #15)
+
+All three address the same observed failure: yesterday's Grafana panels
+silently disappeared. Two independent root causes contributed:
+
+1. `retention: 2h` — Prometheus deletes data >2h old whether the pod
+   restarts or not. Anything you recorded at 9 PM is gone by 11 PM.
+2. `storageSpec: {}` — emptyDir. Any restart (OOMKill at the previous
+   1Gi limit, kind node restart, helm upgrade) wipes the TSDB to zero.
+
+The fixes are mutually reinforcing. Persistent storage alone wouldn't
+help (data still expires at 2h); long retention alone wouldn't help
+(restart wipes everything anyway). All three are needed for any soak
+run > 2h to produce reviewable artifacts.
+
+To apply the change, rerun `make install-deps`. The helm upgrade
+recreates the Prometheus StatefulSet and binds a fresh PVC; the existing
+metrics inside the emptyDir are lost on this one-time transition (you
+already have nothing older than 2h anyway).
+
 ## How to apply this branch to a running cluster
 
 ```bash
 git checkout hackathon
+# Rerun install-deps ONLY when the Prometheus values changed (#13-#15).
+# Skipping this leaves the cluster on retention=2h + emptyDir and the
+# data-retention fixes won't take effect.
+make install-deps
 make deploy
 # Verify all overrides took effect:
 kubectl -n demo get aas app-agentic -o jsonpath='{.spec.rpsPerPodMin}/{.spec.rpsPerPodMax}{"\n"}'
 # expect: 30/30
 kubectl -n demo get hpa app-hpa -o jsonpath='{.spec.behavior.scaleDown.policies[0].value}{"\n"}'
 # expect: 4
+kubectl -n monitoring get prometheus -o jsonpath='{.items[0].spec.retention}{"\n"}'
+# expect: 30h
+kubectl -n monitoring get pvc -l app.kubernetes.io/name=prometheus
+# expect: a Bound PVC with CAPACITY 5Gi
 kubectl -n agentic-system rollout status deploy/forecast-service
 kubectl -n agentic-system rollout status deploy/controller-manager -n agentic-autoscaler-system
 ```

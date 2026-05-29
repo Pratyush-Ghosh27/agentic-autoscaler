@@ -55,13 +55,42 @@ grafana:
 
 prometheus:
   prometheusSpec:
-    retention: 2h
+    # HACKATHON OVERRIDE: 2h -> 30h. The 2h default deletes every metric
+    # older than 2 hours, which silently broke yesterday's Grafana panels
+    # (and would make any multi-hour soak run pointless — by the time you
+    # review it, only the most recent 2h of data still exists). 30h covers
+    # a full 24h diurnal run plus 6h of slack so the dashboard is reviewable
+    # the next morning. To restore: drop back to 2h.
+    retention: 30h
     resources:
       requests:
-        memory: 512Mi
-      limits:
         memory: 1Gi
-    storageSpec: {}
+      limits:
+        # HACKATHON OVERRIDE: 1Gi -> 2Gi. With 30h of retained data plus
+        # the working set for Grafana queries, the previous 1Gi limit
+        # triggered OOMKills on long runs — which is the *other* way
+        # yesterday's data disappeared (pod restart wiped the emptyDir
+        # the StatefulSet was using). Now backed by a PVC (storageSpec
+        # below), so a restart no longer loses data, but the larger
+        # working set still needs the bump.
+        memory: 2Gi
+    # HACKATHON OVERRIDE: was {} (= emptyDir). Any Prometheus pod restart
+    # (OOM, kind node restart, helm upgrade, kubelet eviction) wiped the
+    # TSDB to zero on the previous config — the single most common cause
+    # of "where did yesterday's Grafana panels go?". A real PVC backed
+    # by kind's built-in local-path-provisioner (`standard` storageClass,
+    # auto-installed by `kind create cluster`) survives every restart
+    # short of `kind delete cluster`. 5Gi is ~25-50x headroom for 30h
+    # of this workload's metric volume; the PVC binds lazily so it costs
+    # nothing on disk until Prometheus actually writes to it.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: standard
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
     # By default kube-prometheus-stack only picks up PodMonitors and
     # ServiceMonitors that carry the `release: kube-prom` label and live
     # in the chart's namespace. We deliberately want target-app pods in

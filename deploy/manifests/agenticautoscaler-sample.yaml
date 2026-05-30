@@ -61,11 +61,18 @@ spec:
   # gbdt_quantile; that forecaster is opt-in only. Pin it explicitly when
   # the workload has bursty / spike behaviour that quantile bands handle
   # better than Prophet's seasonality model.
-  # HACKATHON OVERRIDE: pinned to prophet (was unset/auto). Diurnal has
-  # clear seasonality and after 12h elapsed Prophet's hourly_profile
-  # regressor engages, giving it a meaningful edge over linear_extrap.
-  # Pinning avoids the classifier flapping to linear_extrap during the
-  # first few hours when the partial window looks flat. Once the
-  # demo concludes, revert to "auto" (or delete the line) for
-  # workload-agnostic operation.
-  preferredForecaster: prophet
+  #
+  # HACKATHON-SEVEN: un-pinned. On hackathon-four this was pinned to
+  # `prophet` to guarantee the strongest forecaster for the diurnal/
+  # rotating demos. That guarantee is itself an asymmetry: production
+  # AAS users would leave it on "auto" and let the classifier pick
+  # based on observed pattern. Removing the pin lets the classifier
+  # exercise its auto path — on the rotating scenario it will almost
+  # certainly converge on prophet anyway (the cycles are clearly
+  # periodic), but the demo can now honestly claim the auto path
+  # found the right forecaster on its own.
+  #
+  # To restore the hackathon-four hand-pinned forecaster: uncomment
+  # the `preferredForecaster: prophet` line below.
+  #
+  # preferredForecaster: prophet

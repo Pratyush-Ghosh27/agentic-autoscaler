@@ -29,10 +29,10 @@
 # -----------------------------------------------------------------------
 set -euo pipefail
 
-SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal|rotating>}"
+SCENARIO="${1:?usage: $0 <ramp|steady|spiky|bursty|diurnal|rotating|hourly>}"
 case "$SCENARIO" in
-  ramp|steady|spiky|bursty|diurnal|rotating) ;;
-  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal|rotating)"; exit 2 ;;
+  ramp|steady|spiky|bursty|diurnal|rotating|hourly) ;;
+  *) echo "unknown scenario: $SCENARIO (expected ramp|steady|spiky|bursty|diurnal|rotating|hourly)"; exit 2 ;;
 esac
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -50,8 +50,8 @@ JOB_NAME="k6-${SCENARIO}"
 # Override either direction with K6_NO_TRAP=1 (force no-trap) or
 # K6_NO_TRAP=0 (force trap).
 case "$SCENARIO" in
-  diurnal|rotating) DEFAULT_NO_TRAP=1 ;;
-  *)                DEFAULT_NO_TRAP=0 ;;
+  diurnal|rotating|hourly) DEFAULT_NO_TRAP=1 ;;
+  *)                       DEFAULT_NO_TRAP=0 ;;
 esac
 NO_TRAP="${K6_NO_TRAP:-${DEFAULT_NO_TRAP}}"
 
@@ -127,6 +127,21 @@ export ROTATING_RAMP_PEAK_RPS="${ROTATING_RAMP_PEAK_RPS:-200}"
 export ROTATING_SPIKE_RPS="${ROTATING_SPIKE_RPS:-200}"
 export ROTATING_BURSTY_FLOOR="${ROTATING_BURSTY_FLOOR:-60}"
 export ROTATING_BURSTY_CEILING="${ROTATING_BURSTY_CEILING:-140}"
+# Hourly scenario tunables (hackathon-seven-branch addition). The cycle
+# is hard-coded at 60 min by design — the whole point is to score >0.70
+# on HourlyAutocorr so the classifier picks Prophet, which only works
+# if the cycle length matches the autocorr lag (also 60 min). Cycle
+# count (HOURLY_CYCLES) is the only schedule-shape knob; the others
+# just rescale individual phases' RPS without changing the periodicity.
+export HOURLY_CYCLES="${HOURLY_CYCLES:-24}"
+export HOURLY_CALM_RPS="${HOURLY_CALM_RPS:-80}"
+export HOURLY_PEAK_RPS="${HOURLY_PEAK_RPS:-250}"
+export HOURLY_CHAOS_LOW_RPS="${HOURLY_CHAOS_LOW_RPS:-100}"
+export HOURLY_CHAOS_HIGH_RPS="${HOURLY_CHAOS_HIGH_RPS:-400}"
+export HOURLY_PLATEAU_RPS="${HOURLY_PLATEAU_RPS:-280}"
+export HOURLY_WAVE_CENTER_RPS="${HOURLY_WAVE_CENTER_RPS:-250}"
+export HOURLY_WAVE_AMPLITUDE="${HOURLY_WAVE_AMPLITUDE:-60}"
+export HOURLY_QUIET_RPS="${HOURLY_QUIET_RPS:-90}"
 
 # Per-scenario default timeout. Long-running scenarios derive their
 # ceiling from the relevant tunable (+1h slack for image pull, Pod
@@ -140,6 +155,11 @@ case "$SCENARIO" in
   rotating)
       # ROTATING_CYCLES * 140 min per cycle * 60 s/min + 1h slack.
       DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${ROTATING_CYCLES} * 140 * 60 + 3600 }")"
+      TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
+      ;;
+  hourly)
+      # HOURLY_CYCLES * 60 min per cycle * 60 s/min + 1h slack.
+      DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${HOURLY_CYCLES} * 60 * 60 + 3600 }")"
       TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
       ;;
   *)
@@ -156,7 +176,7 @@ esac
 # whitelist arg expects literal `$VAR` tokens, not their expanded
 # values. shellcheck SC2016 is a false positive here.
 # shellcheck disable=SC2016
-ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS $ROTATING_CYCLES $ROTATING_STEADY_RPS $ROTATING_RAMP_PEAK_RPS $ROTATING_SPIKE_RPS $ROTATING_BURSTY_FLOOR $ROTATING_BURSTY_CEILING'
+ENVSUBST_VARS='$SCENARIO $RAMP_UP_DURATION $RAMP_HOLD_DURATION $RAMP_DOWN_DURATION $RAMP_RPS_PEAK $STEADY_RPS $STEADY_DURATION $SPIKE_BASE_RPS $SPIKE_PEAK_RPS $SPIKE_INTERVAL $SPIKE_DURATION $SPIKY_TOTAL_DURATION $BURST_SIZE $BURST_MIN_INTERVAL $BURST_MAX_INTERVAL $BURSTY_TOTAL_DURATION $BURSTY_ITERATIONS $DIURNAL_BASE_RPS $DIURNAL_PEAK_RPS $DIURNAL_SPIKE_RPS $DIURNAL_TOTAL_HOURS $ROTATING_CYCLES $ROTATING_STEADY_RPS $ROTATING_RAMP_PEAK_RPS $ROTATING_SPIKE_RPS $ROTATING_BURSTY_FLOOR $ROTATING_BURSTY_CEILING $HOURLY_CYCLES $HOURLY_CALM_RPS $HOURLY_PEAK_RPS $HOURLY_CHAOS_LOW_RPS $HOURLY_CHAOS_HIGH_RPS $HOURLY_PLATEAU_RPS $HOURLY_WAVE_CENTER_RPS $HOURLY_WAVE_AMPLITUDE $HOURLY_QUIET_RPS'
 
 # Re-create the ConfigMap on every run so script changes are picked up
 # without a separate sync step. `--dry-run=client -o yaml | apply -f -`
@@ -171,6 +191,7 @@ kubectl create configmap k6-scripts \
     --from-file="${ROOT_DIR}/k6/scenarios/bursty.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/diurnal.js" \
     --from-file="${ROOT_DIR}/k6/scenarios/rotating.js" \
+    --from-file="${ROOT_DIR}/k6/scenarios/hourly.js" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 # Delete any prior Job of the same name. Job specs are immutable on
@@ -193,7 +214,7 @@ envsubst "$ENVSUBST_VARS" < "${ROOT_DIR}/deploy/k6/job.yaml" | kubectl apply -f 
 # `kubectl delete` defensively. Print the resume instructions before
 # the Pod even starts so they can be captured by `script` or screenshot.
 case "$SCENARIO" in
-  diurnal|rotating)
+  diurnal|rotating|hourly)
     cat <<EOF
 ==> LONG-RUNNING SCENARIO (${SCENARIO}, expected duration > 1h)
 
@@ -271,8 +292,8 @@ DEADLINE=$(( $(date +%s) + TIMEOUT_SECONDS ))
 # emitting metrics every second; an extra 25s to notice the Job
 # finished doesn't matter on a 23h run).
 case "$SCENARIO" in
-  diurnal|rotating) POLL_INTERVAL=30 ;;
-  *)                POLL_INTERVAL=5  ;;
+  diurnal|rotating|hourly) POLL_INTERVAL=30 ;;
+  *)                       POLL_INTERVAL=5  ;;
 esac
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     SUCCEEDED="$(kubectl get "job/${JOB_NAME}" -n "$NS" \

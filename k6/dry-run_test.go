@@ -76,6 +76,10 @@ func TestK6DryRun_Rotating(t *testing.T) {
 	runK6Scenario(t, "scenarios/rotating.js")
 }
 
+func TestK6DryRun_Hourly(t *testing.T) {
+	runK6Scenario(t, "scenarios/hourly.js")
+}
+
 func runK6Scenario(t *testing.T, script string) {
 	t.Helper()
 
@@ -126,6 +130,20 @@ func runK6Scenario(t *testing.T, script string) {
 		"ROTATING_SPIKE_RPS=3",
 		"ROTATING_BURSTY_FLOOR=1",
 		"ROTATING_BURSTY_CEILING=2",
+		// Hourly scenario: dialled-down RPS keeps the in-process httptest
+		// server comfortable. HOURLY_CYCLES=1 still emits ~43 stages
+		// totalling 60 min of wall-clock duration on the executor, but
+		// --vus=1 --iterations=5 above overrides the executor entirely,
+		// so the test only validates the script parses + imports.
+		"HOURLY_CYCLES=1",
+		"HOURLY_CALM_RPS=1",
+		"HOURLY_PEAK_RPS=3",
+		"HOURLY_CHAOS_LOW_RPS=1",
+		"HOURLY_CHAOS_HIGH_RPS=4",
+		"HOURLY_PLATEAU_RPS=3",
+		"HOURLY_WAVE_CENTER_RPS=2",
+		"HOURLY_WAVE_AMPLITUDE=1",
+		"HOURLY_QUIET_RPS=1",
 	)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()

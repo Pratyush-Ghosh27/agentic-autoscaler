@@ -168,6 +168,24 @@ spec:
               value: "${ROTATING_BURSTY_FLOOR}"
             - name: ROTATING_BURSTY_CEILING
               value: "${ROTATING_BURSTY_CEILING}"
+            - name: HOURLY_CYCLES
+              value: "${HOURLY_CYCLES}"
+            - name: HOURLY_CALM_RPS
+              value: "${HOURLY_CALM_RPS}"
+            - name: HOURLY_PEAK_RPS
+              value: "${HOURLY_PEAK_RPS}"
+            - name: HOURLY_CHAOS_LOW_RPS
+              value: "${HOURLY_CHAOS_LOW_RPS}"
+            - name: HOURLY_CHAOS_HIGH_RPS
+              value: "${HOURLY_CHAOS_HIGH_RPS}"
+            - name: HOURLY_PLATEAU_RPS
+              value: "${HOURLY_PLATEAU_RPS}"
+            - name: HOURLY_WAVE_CENTER_RPS
+              value: "${HOURLY_WAVE_CENTER_RPS}"
+            - name: HOURLY_WAVE_AMPLITUDE
+              value: "${HOURLY_WAVE_AMPLITUDE}"
+            - name: HOURLY_QUIET_RPS
+              value: "${HOURLY_QUIET_RPS}"
           resources:
             # Guaranteed QoS class: requests == limits on every
             # resource. Kubelet evicts BestEffort first, then
@@ -221,3 +239,5 @@ spec:
                 path: scenarios/diurnal.js
               - key: rotating.js
                 path: scenarios/rotating.js
+              - key: hourly.js
+                path: scenarios/hourly.js

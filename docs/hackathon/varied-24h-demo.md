@@ -168,12 +168,19 @@ The compound wave's periods (17, 60, 240 min) don't align with hour-of-day. The 
 
 ## Verify the deploy
 
+> **Deployment name note:** `config/default/kustomization.yaml` has
+> `namePrefix: agentic-autoscaler-`, so the controller Deployment lands
+> in-cluster as `agentic-autoscaler-controller-manager`, not bare
+> `controller-manager`. Earlier hackathon-* docs (rotating-loop.md,
+> the bottom of env-changes.md) omit the prefix — those commands will
+> return `Error from server (NotFound)`. Use the prefixed names below.
+
 ```bash
-kubectl -n agentic-autoscaler-system get deploy controller-manager \
+kubectl -n agentic-autoscaler-system get deploy agentic-autoscaler-controller-manager \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="HOT_PATH_HISTORY_MINUTES")].value}{"\n"}'
 # expect: 45
 
-kubectl -n agentic-autoscaler-system get deploy controller-manager \
+kubectl -n agentic-autoscaler-system get deploy agentic-autoscaler-controller-manager \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLASSIFIER_HISTORY_HOURS")].value}{"\n"}'
 # expect: 4
 

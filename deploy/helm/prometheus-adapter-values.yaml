@@ -21,9 +21,24 @@ rules:
   default: false
   custom:
     # Build `http_requests_per_second` (Pods custom metric) from the rate
-    # of successful HTTP requests over a 1-minute window. Status filter
-    # excludes 5xx so an overload-503 burst doesn't trick the HPA into
-    # scaling *up* on the very signal that means the pod is at capacity.
+    # of ALL incoming HTTP requests over a 1-minute window — no status
+    # filter.
+    #
+    # HACKATHON-SIX FIX: the previous query filtered `status=~"2.."` to
+    # avoid "the overload signal also being the scale-up signal", on the
+    # rationale that an overload burst should not drive HPA to scale up
+    # on the very 503s that prove the pod is overloaded. That rationale
+    # creates a death spiral under sustained overload: pods 503 a
+    # fraction of requests → adapter sees only the successful subset
+    # → HPA reads a per-pod RPS BELOW its target → HPA decides pods are
+    # under-loaded → never scales → pods keep 503ing → adapter keeps
+    # under-reading. Empirically on a 2h soak: HPA stuck at 3 pods,
+    # ~1.2M cumulative 503s, zero SuccessfulRescale events.
+    #
+    # Counting all statuses turns HPA into a demand-based reactive
+    # scaler (what users actually expect), at the cost of HPA briefly
+    # over-scaling during the 60-90s detection lag on a burst. That
+    # lag IS the 503-gap window the demo is built to expose.
     - seriesQuery: 'http_requests_total{namespace!="",pod!=""}'
       resources:
         overrides:
@@ -33,7 +48,7 @@ rules:
         matches: "^http_requests_total$"
         as: "http_requests_per_second"
       metricsQuery: |
-        sum(rate(http_requests_total{<<.LabelMatchers>>,status=~"2.."}[1m])) by (<<.GroupBy>>)
+        sum(rate(http_requests_total{<<.LabelMatchers>>}[1m])) by (<<.GroupBy>>)
 
 # Keep resources small for kind / CI; bump in production.
 resources:

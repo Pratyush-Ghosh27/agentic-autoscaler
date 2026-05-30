@@ -1,33 +1,31 @@
 ---
-# Standard HPA for app-hpa. On hackathon-four we deliberately tune HPA
-# for **production-typical cost efficiency** (averageValue=50, which
-# corresponds to ~71% per-pod capacity utilisation) rather than the
-# safety-margin target the AgenticAutoscaler uses (rpsPerPodMin=30,
-# ~43% utilisation).
-#
-# Why this asymmetry exists: it mirrors how HPA is tuned in production.
-# HPA users universally configure for cost (high utilisation) because
-# HPA can only react, not predict — running at ~71% util means a 50%
-# RPS bump pushes pods to ~107% capacity and produces 503s during the
-# ~90s HPA needs to detect-and-scale. The AgenticAutoscaler can afford
-# lower utilisation because it forecasts demand 5 min ahead and pre-
-# provisions; it doesn't need the headroom budget HPA does.
+# Standard HPA for app-hpa. On hackathon-seven we deliberately tune HPA
+# and the AgenticAutoscaler to the **same per-pod target** so the
+# comparison is fair on the tuning dimension. Any residual 503-rate
+# gap that remains is purely the consequence of reaction model
+# (HPA reactive vs AAS predictive), not of unequal headroom.
 #
 #   per-pod capacity ≈ TARGET_CONCURRENCY / TARGET_WORK_DURATION
 #                    ≈ 8 / 0.115s ≈ 70 RPS
-#   averageValue=50 → ~71% utilisation at target
-#   AgenticAutoscaler stays at rpsPerPodMin=30 → ~43% utilisation
+#   averageValue=40 → ~57% utilisation at target
+#   AgenticAutoscaler matches with rpsPerPodMin=40 → ~57% utilisation
 #
-# Effect on the rotating/diurnal demos: HPA produces 503s during every
-# upward RPS transition (steady→ramp, ramp→spiky on rotating; trough→
-# morning, lunch spike on diurnal). AAS retains its ~60% headroom and
-# stays clean. The "predicted ≈ actual" Prophet narrative is unchanged
-# because the actual traffic shape isn't altered — only HPA's *response*
-# to it.
+# Both scalers therefore have identical static headroom (~30 RPS/pod,
+# or ~43% slack from their target). HPA will still produce 503s during
+# the 60-90s detection-and-scale window after a transition because that
+# window exists regardless of how the target is tuned; AAS pre-scales
+# 5 min ahead so its same headroom is never tested. THIS is the
+# experiment the demo isolates.
 #
-# To revert to the fair-comparison default (averageValue=30) used on
-# hackathon and hackathon-two, see docs/hackathon/env-changes.md
-# change #20.
+# Why this is different from hackathon-four:
+# - hackathon-four had averageValue=50 (71% util) vs AAS=30 (43%);
+#   AAS had 2x the absolute headroom by tuning alone, before any
+#   forecaster did any work. That confounded forecaster vs tuning.
+# - hackathon-seven equalises the target so only the forecaster matters.
+#
+# To restore the asymmetric hackathon-four tuning: set averageValue
+# back to "50" here and rpsPerPodMin/Max back to 30/31 in
+# agenticautoscaler-sample.yaml.
 #
 # Behavior policies match the AgenticAutoscaler's design defaults:
 # 60s scale-up cooldown, 300s scale-down cooldown, +4 / -4 pods per minute.
@@ -61,9 +59,11 @@ spec:
           name: http_requests_per_second
         target:
           type: AverageValue
-          # hackathon-four: 30 → 50 (production-typical cost-efficiency
-          # target ≈ 71% utilisation). See file header for rationale.
-          averageValue: "50"
+          # hackathon-seven: 50 → 40 (matched with AAS rpsPerPodMin=40).
+          # Equal per-pod targets across both scalers ⇒ identical static
+          # headroom ⇒ residual 503-rate gap isolates the forecaster's
+          # contribution. See file header for rationale.
+          averageValue: "40"
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60

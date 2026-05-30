@@ -30,30 +30,30 @@ spec:
   # rpsPerPodMin/Max bracket the rps_per_pod target the classifier may
   # converge on. They are jointly tuned with target-*.yaml's
   # TARGET_CONCURRENCY=8 (per-pod capacity ~70 RPS) and hpa.yaml's
-  # averageValue=30 so the steady-state operating point matches HPA's;
-  # the spread (10 → 30) gives the classifier 3× of slack to be more
-  # aggressive than HPA on periodic / spiky patterns. The schema-level
-  # defaults (50 / 500 in api/v1alpha1/agenticautoscaler_types.go) are
-  # left untouched — those are universal safety bounds, not workload-
-  # specific tunings.
-  # HACKATHON OVERRIDE: locked to match HPA's averageValue=30 so the
-  # AAS divisor matches HPA's exactly (1:1 replica math). Strips the
-  # classifier's 3x early-scale advantage so the only remaining
-  # difference between scalers is the forecast lookahead.
+  # averageValue so the two scalers operate at the same per-pod target.
   #
-  # Why 30/31 and not 30/30: the validating webhook
+  # HACKATHON-SEVEN OVERRIDE: 30/31 -> 40/41 to match hpa.yaml's
+  # averageValue=40 (raised from 50 on hackathon-four). Equal per-pod
+  # targets on both scalers ⇒ identical static headroom ⇒ residual
+  # 503-rate gap isolates the forecaster's contribution to the
+  # comparison. Without this, AAS had structural per-pod headroom
+  # (rpsPerPodMin=30, 43% util) that HPA didn't (averageValue=50,
+  # 71% util), confounding the predictive advantage with a
+  # cost-tuning asymmetry.
+  #
+  # Why 40/41 and not 40/40: the validating webhook
   # (internal/webhook/v1alpha1/validator.go) enforces strict
   # `rpsPerPodMin < rpsPerPodMax` (the midpoint formula
   # `(min+max)/2` and the rpsPerPod clamp need a non-empty interval).
-  # 30/31 is the tightest validator-legal pin to HPA's
-  # averageValue=30. Replica math is identical at 30 vs 31 for every
-  # RPS level the demo hits (100, 200, 250, 300, 500): ceil(N/30) ==
-  # ceil(N/31) at all of those.
+  # 40/41 is the tightest validator-legal pin to HPA's
+  # averageValue=40. Replica math is identical at 40 vs 41 for every
+  # RPS level the rotating demo hits.
   #
-  # To restore production defaults: drop rpsPerPodMin back to 10 and
-  # rpsPerPodMax to whatever the workload needs.
-  rpsPerPodMin: 30
-  rpsPerPodMax: 31
+  # To restore the hackathon-four asymmetric tuning (HPA cost-tight,
+  # AAS safety-margin): drop these back to 30/31 and restore
+  # averageValue=50 in hpa.yaml.
+  rpsPerPodMin: 40
+  rpsPerPodMax: 41
   # preferredForecaster pins which forecaster the hot path uses. Leave
   # unset (or "auto") to defer to the classifier — recommended for most
   # workloads. The CRD enum is: prophet | linear_extrap | gbdt_quantile |

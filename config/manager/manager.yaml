@@ -103,15 +103,18 @@ spec:
           # 10 -> 3: first forecast call after 3 min instead of 10
           - name: HOT_PATH_MIN_POINTS
             value: "3"
-          # HACKATHON-TWO OVERRIDE: 60 -> 30. The rotating-loop demo
-          # cycles through steady/ramp/spiky/bursty every 35 min. A
-          # 60-min hot-path window straddles two scenarios at every
-          # boundary, blurring the forecaster's view of "what pattern
-          # am I in right now?". 30 min captures most of one scenario
-          # without leaking the previous one's tail. Still well above
-          # PROPHET_MIN_POINTS=15 so Prophet engages comfortably.
+          # HACKATHON-SIX OVERRIDE: 30 -> 45. The varied scenario is a
+          # continuously-moving compound wave (17/60/240-min sinusoids)
+          # rather than discrete 35-min phases. Prophet's trend +
+          # changepoint fit needs enough context to see ~3 full fast-
+          # wave cycles (3 × 17min = 51min) and ~¾ of one mid-wave
+          # (60min) so the per-iteration model isn't dominated by a
+          # single phase of the fastest oscillator. 45 min is the
+          # smallest window that comfortably covers both. Still well
+          # above PROPHET_MIN_POINTS=15. Was 30 on hackathon-two (sized
+          # for 35-min discrete phases there).
           - name: HOT_PATH_HISTORY_MINUTES
-            value: "30"
+            value: "45"
           # 60 -> 30: 2x more reconcile cycles per minute. Trades a
           # small bump in Prometheus + forecast-service load for much
           # finer-grained scaling decisions.
@@ -126,20 +129,19 @@ spec:
           # 20-min scenario sees 4 classifications instead of zero.
           - name: CLASSIFIER_INTERVAL_MINUTES
             value: "5"
-          # HACKATHON-TWO OVERRIDE: 25 -> 2. The rotating-loop demo
-          # (steady -> ramp -> spiky -> bursty, 35 min each) wants the
-          # classifier to flip patterns within each scenario, not
-          # average across many cycles. 25h would let the classifier
-          # see ~10 cycles of mixed patterns and stamp PatternSpiky or
-          # PatternDefault permanently. 2h covers ~one full 2h28min
-          # cycle while keeping enough samples to satisfy the floor:
-          # at default CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=5 the query
-          # returns 2*60/5 = 24 samples, just above the 22-point
+          # HACKATHON-SIX OVERRIDE: 2 -> 4. The varied scenario's
+          # slowest sinusoidal component has a 4-hour period; the
+          # classifier wants to see at least one full slow-drift cycle
+          # to characterise the workload stably (so it doesn't flip
+          # PatternFlat ↔ PatternGradualRamp twice per cycle). 4h at
+          # default CONTEXT_DOWNSAMPLE_RESOLUTION_MIN=5 returns
+          # 4*60/5 = 48 samples, well above the 22-point
           # CLASSIFIER_MIN_POINTS floor. PROPHET_USE_HOURLY_REGRESSOR
-          # is also turned off (see forecast-service.yaml) since a
-          # 2.5h cycle doesn't align with hour-of-day either.
+          # remains off (see forecast-service.yaml) because the
+          # 17/60/240-min periods don't align with hour-of-day either.
+          # Was 2h on hackathon-two (sized for 2h28min rotating cycle).
           - name: CLASSIFIER_HISTORY_HOURS
-            value: "2"
+            value: "4"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

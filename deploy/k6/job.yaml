@@ -168,6 +168,28 @@ spec:
               value: "${ROTATING_BURSTY_FLOOR}"
             - name: ROTATING_BURSTY_CEILING
               value: "${ROTATING_BURSTY_CEILING}"
+            - name: VARIED_TOTAL_HOURS
+              value: "${VARIED_TOTAL_HOURS}"
+            - name: VARIED_BASELINE_MEAN
+              value: "${VARIED_BASELINE_MEAN}"
+            - name: VARIED_DRIFT_AMP
+              value: "${VARIED_DRIFT_AMP}"
+            - name: VARIED_MID_AMP
+              value: "${VARIED_MID_AMP}"
+            - name: VARIED_FAST_AMP
+              value: "${VARIED_FAST_AMP}"
+            - name: VARIED_NOISE_AMP
+              value: "${VARIED_NOISE_AMP}"
+            - name: VARIED_BURST_INTERVAL_MIN
+              value: "${VARIED_BURST_INTERVAL_MIN}"
+            - name: VARIED_BURST_HEIGHT_RPS
+              value: "${VARIED_BURST_HEIGHT_RPS}"
+            - name: VARIED_BURST_RAMP_SEC
+              value: "${VARIED_BURST_RAMP_SEC}"
+            - name: VARIED_BURST_HOLD_SEC
+              value: "${VARIED_BURST_HOLD_SEC}"
+            - name: VARIED_BURST_DECAY_SEC
+              value: "${VARIED_BURST_DECAY_SEC}"
           resources:
             # Guaranteed QoS class: requests == limits on every
             # resource. Kubelet evicts BestEffort first, then
@@ -221,3 +243,5 @@ spec:
                 path: scenarios/diurnal.js
               - key: rotating.js
                 path: scenarios/rotating.js
+              - key: varied.js
+                path: scenarios/varied.js

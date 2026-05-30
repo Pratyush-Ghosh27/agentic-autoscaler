@@ -386,6 +386,10 @@ k6-incluster-24h-loop: ## Replay ramp/steady/spiky/bursty round-robin until DURA
 k6-incluster-rotating: ## Hackathon-two: single-process 24h run cycling steady -> ramp -> spiky -> bursty (no inter-scenario gaps). Set ROTATING_CYCLES to change duration.
 	bash deploy/k6/run-incluster.sh rotating
 
+.PHONY: k6-incluster-varied
+k6-incluster-varied: ## Hackathon-six: 24h continuously-varying compound wave + 47 periodic +180-RPS bursts. Set VARIED_TOTAL_HOURS for shorter runs.
+	bash deploy/k6/run-incluster.sh varied
+
 # Host-mode k6 targets — useful for ad-hoc single-pod debugging only.
 # `kubectl port-forward svc/X` does NOT load-balance (kubernetes/kubernetes#15180);
 # every connection pins to the same Endpoint, so any replica > 1 is
@@ -414,6 +418,10 @@ k6-diurnal: ## Run the diurnal k6 scenario from the host (single-pod; debug only
 .PHONY: k6-rotating
 k6-rotating: ## Run the rotating k6 scenario from the host (single-pod; debug only).
 	$(K6) run k6/scenarios/rotating.js
+
+.PHONY: k6-varied
+k6-varied: ## Run the varied k6 scenario from the host (single-pod; debug only).
+	$(K6) run k6/scenarios/varied.js
 
 # ============================================================
 ##@ Smoke + E2E

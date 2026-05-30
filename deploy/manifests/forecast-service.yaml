@@ -40,11 +40,20 @@ spec:
             # scenario on Prophet rather than linear_extrap.
             - name: PROPHET_MIN_POINTS
               value: "15"
-            # HACKATHON ADDITION: 10 -> 5 makes linear_extrap (the cold
-            # forecaster used in the first ~15 min) more reactive to
-            # recent slope, less smoothed by stale history.
+            # HACKATHON-SIX OVERRIDE: 5 -> 3. The varied scenario's
+            # fast-wave component has a 17-min period and ±20 RPS
+            # amplitude (~7.4 RPS/min peak slope). A 5-min linear-fit
+            # window averages over ~30% of the fast wave's cycle,
+            # which smooths the local slope estimate toward zero
+            # exactly when the wave is mid-swing — producing visible
+            # predicted-vs-actual lag on the dashboard during the
+            # first 15 min before Prophet engages. 3 min captures
+            # most of one fast-wave quarter-cycle (~4 min) so the
+            # slope estimate stays close to the instantaneous rate.
+            # Was 5 on hackathon and hackathon-two (sized for the
+            # gentler ramp/diurnal slopes there).
             - name: LINEAR_EXTRAP_WINDOW_MINUTES
-              value: "5"
+              value: "3"
             # HACKATHON ADDITION: 30 -> 10 lets gbdt_quantile engage at
             # ~15 min instead of ~40. Only fires when an AAS CR pins
             # spec.preferredForecaster: gbdt_quantile.

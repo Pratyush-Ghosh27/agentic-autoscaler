@@ -76,6 +76,10 @@ func TestK6DryRun_Rotating(t *testing.T) {
 	runK6Scenario(t, "scenarios/rotating.js")
 }
 
+func TestK6DryRun_Varied(t *testing.T) {
+	runK6Scenario(t, "scenarios/varied.js")
+}
+
 func runK6Scenario(t *testing.T, script string) {
 	t.Helper()
 
@@ -126,6 +130,22 @@ func runK6Scenario(t *testing.T, script string) {
 		"ROTATING_SPIKE_RPS=3",
 		"ROTATING_BURSTY_FLOOR=1",
 		"ROTATING_BURSTY_CEILING=2",
+		// Varied scenario: 0.01h = 36 stages (~36 minute-equivalents
+		// of baseline plus possibly one burst at the t=30 boundary —
+		// but 0.01h * 60 = 0.6 min, so no burst fires). Dry-run path
+		// overrides the executor via --vus=1 --iterations=5, so this
+		// only validates the script parses cleanly.
+		"VARIED_TOTAL_HOURS=0.01",
+		"VARIED_BASELINE_MEAN=4",
+		"VARIED_DRIFT_AMP=1",
+		"VARIED_MID_AMP=1",
+		"VARIED_FAST_AMP=1",
+		"VARIED_NOISE_AMP=0",
+		"VARIED_BURST_INTERVAL_MIN=30",
+		"VARIED_BURST_HEIGHT_RPS=2",
+		"VARIED_BURST_RAMP_SEC=2",
+		"VARIED_BURST_HOLD_SEC=2",
+		"VARIED_BURST_DECAY_SEC=2",
 	)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()

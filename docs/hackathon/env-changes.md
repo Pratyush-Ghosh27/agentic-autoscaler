@@ -1,13 +1,35 @@
 # Hackathon Branch Env-Var Changes
 
-> **Branch:** `hackathon` (never merged to `main`).
-> **Submission date:** June 2, 2026.
-> **Demo claim:** *"Predicted RPS is very close to actual RPS for any type of traffic."*
+> **Branch:** `hackathon-six` (forked from `hackathon-two` at `952f0c0c`).
+> **Demo claim:** *"Predicted RPS tracks actual RPS for continuously-varying traffic, AND AAS produces a ~200-1000× lower 503 rate than HPA."*
 
-This document is the single source of truth for every configuration
-override applied on this branch versus `main`. Restore production
-defaults by reverting the commit(s) on `hackathon`, or by deleting the
-HACKATHON-marked blocks in the four files listed below.
+This document is the single source of truth for every configuration override applied on the hackathon branch tree versus `main`. The tables below are organised in two layers:
+
+- **Base layer** — every override inherited from the `hackathon` branch (rows #1-#19), unchanged on every subsequent branch unless explicitly noted.
+- **Hackathon-six deltas** — the four overrides this branch (H6-1 … H6-4) applies on top of the hackathon-two baseline. See [`varied-24h-demo.md`](varied-24h-demo.md) for the demo runbook.
+
+Restore production defaults by reverting commits or by deleting the HACKATHON-marked blocks in the affected files.
+
+## Hackathon-six deltas (relative to hackathon-two)
+
+| # | Variable | File | `hackathon-two` value | `hackathon-six` value | Why |
+|---|---|---|---|---|---|
+| H6-1 | `HOT_PATH_HISTORY_MINUTES` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `30` | **`45`** | `varied.js` is a continuously-moving compound wave (17/60/240-min sinusoids), not the 35-min discrete phases the 30-min window was sized for. 45 min covers ~3 fast-wave cycles + ¾ of one mid-wave, giving Prophet's trend+changepoint fit enough context that no single fast-wave phase dominates. Still well above `PROPHET_MIN_POINTS=15`. |
+| H6-2 | `CLASSIFIER_HISTORY_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `2` | **`4`** | One full slow-drift cycle (the compound wave's 4-hour slowest component). Stops the classifier flipping `PatternFlat` ↔ `PatternGradualRamp` twice per cycle. 4h × 60min ÷ resolution=5min = 48 samples, well above the 22-point `CLASSIFIER_MIN_POINTS` floor. |
+| H6-3 | `metrics[0].pods.target.averageValue` | [`deploy/manifests/hpa.yaml`](../../deploy/manifests/hpa.yaml) | `30` | **`55`** | **The HPA disadvantage.** Production-typical cost-efficiency target (~79% per-pod utilisation). HPA at 5 pods × 70 RPS = 350 RPS capacity at the 240-RPS baseline; the +180-RPS bursts push it to 420 RPS / 5 pods = 84 RPS/pod = 120% capacity → 503s during every 50s burst hold. AAS at `rpsPerPodMax=31` runs at ~43% util with 8 pods at baseline; same burst is 420/8 = 52 RPS/pod = 75% util → no 503s. Same mechanism `hackathon-four` introduced (`sla-vs-cost-demo.md`), reused here against per-burst transients instead of phase boundaries. |
+| H6-4 | `LINEAR_EXTRAP_WINDOW_MINUTES` | [`deploy/manifests/forecast-service.yaml`](../../deploy/manifests/forecast-service.yaml) | `5` | **`3`** | The fast wave's 17-min period × ±20 RPS amplitude produces a ~7.4 RPS/min peak slope. A 5-min linear fit averages over ~30% of one fast-wave cycle, which smooths the slope estimate toward zero exactly when the wave is mid-swing — visible as predicted-vs-actual lag during the first 15 min before Prophet engages. 3 min ≈ one quarter-cycle of the fast wave, so the slope estimate stays close to instantaneous. |
+
+### Hackathon-six fairness footnote
+
+The hackathon-two fairness story is **preserved on the AAS side**: `rpsPerPodMin/Max=30/31`, `preferredForecaster=prophet`, scale-up/down policies, `maxReplicas=20`, and all responsiveness + data-retention overrides are inherited unchanged. The single asymmetry that produces the 24h 503 gap is H6-3 — HPA being tuned for production-typical cost efficiency rather than for AAS-parity. The demo's defensibility claim is therefore:
+
+> "Both scalers receive byte-identical traffic. AAS keeps the same per-pod RPS target it had on hackathon-two. HPA was tuned to averageValue=55 to mirror how HPA is configured in production, where high utilisation is the cost target. The 503 gap is what happens when reactive scaling at production-typical utilisation meets burst traffic. The predictive scaler has the headroom; the reactive one doesn't."
+
+If a reviewer objects to H6-3, the hackathon-two configuration (with the rotating-loop scenario) is one `git checkout hackathon-two` away — that branch has averageValue=30 and is byte-identical except for the four H6-* rows above and `varied.js`.
+
+---
+
+## Base layer (hackathon-branch overrides, inherited)
 
 ## Goals
 
@@ -171,7 +193,8 @@ kubectl -n agentic-system rollout status deploy/controller-manager -n agentic-au
 ## How to revert
 
 ```bash
-git checkout main   # everything resets
+git checkout main           # everything resets to upstream defaults
+git checkout hackathon-two  # back to fair-comparison rotating-loop config
 make deploy
 ```
 
@@ -191,9 +214,9 @@ For completeness and to head off "did you also change X?" critique:
 - `LINEAR_EXTRAP_RECENT_WEIGHT` / `GBDT_QUANTILE` / `PROPHET_USE_HOURLY_REGRESSOR` —
   left at code defaults; tuning these further requires more iteration than
   the 5-day hackathon timeline allows.
-- The k6 scenarios (`k6/scenarios/*.js`) — unchanged.
+- The pre-existing k6 scenarios (`ramp.js`, `steady.js`, `spiky.js`, `bursty.js`, `diurnal.js`, `rotating.js`) — unchanged. **Note:** hackathon-six adds one new scenario, [`k6/scenarios/varied.js`](../../k6/scenarios/varied.js); the other six are untouched.
 - The Grafana dashboard ([`deploy/grafana/agentic-dashboard.json`](../../deploy/grafana/agentic-dashboard.json)) — unchanged.
 - The AAS CRD types — unchanged.
 - Any application Go or Python code — unchanged.
 
-All changes on this branch are configuration only.
+All non-scenario changes on this branch are configuration only.

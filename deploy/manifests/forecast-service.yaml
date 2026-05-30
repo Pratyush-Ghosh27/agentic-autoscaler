@@ -68,6 +68,23 @@ spec:
             # scenarios; only the new `schedule` scenario benefits.
             - name: PROPHET_USE_HOURLY_REGRESSOR
               value: "true"
+            # HACKATHON-FIVE-24H OVERRIDE: 12 -> 4. Mirrors the
+            # controller-side HOURLY_PROFILE_MIN_HOURS (see
+            # config/manager/manager.yaml) so the service's
+            # context-validation sanity check stays in lock-step.
+            # The controller is where the flip actually happens
+            # (it stamps hourly_profile_valid into the request
+            # context based on its own setting); the service uses
+            # this value only as a mirrored cross-check (per
+            # forecast-service/tests/integration/test_app.py "G11:
+            # mirrored on the service for context validation").
+            # Drift between the two would cause the service to
+            # reject contexts the controller considers valid.
+            # Rationale for choosing 4 is documented at length in
+            # the controller manifest; tl;dr: 24h demo budget needs
+            # the regressor active well before hour 12.
+            - name: HOURLY_PROFILE_MIN_HOURS
+              value: "4"
           resources:
             requests:
               cpu: 200m

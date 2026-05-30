@@ -128,7 +128,7 @@ export ROTATING_SPIKE_RPS="${ROTATING_SPIKE_RPS:-200}"
 export ROTATING_BURSTY_FLOOR="${ROTATING_BURSTY_FLOOR:-60}"
 export ROTATING_BURSTY_CEILING="${ROTATING_BURSTY_CEILING:-140}"
 # Schedule scenario tunables (hackathon-five-branch addition).
-export SCHEDULE_DAYS="${SCHEDULE_DAYS:-2}"
+export SCHEDULE_DAYS="${SCHEDULE_DAYS:-1}"
 export SCHEDULE_LOW_RPS="${SCHEDULE_LOW_RPS:-100}"
 export SCHEDULE_MEDLO_RPS="${SCHEDULE_MEDLO_RPS:-150}"
 export SCHEDULE_MED_RPS="${SCHEDULE_MED_RPS:-200}"
@@ -150,7 +150,7 @@ case "$SCENARIO" in
       TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
       ;;
   schedule)
-      # SCHEDULE_DAYS * 24h * 3600s/h + 1h slack. Default 2 days = 49h.
+      # SCHEDULE_DAYS * 24h * 3600s/h + 1h slack. Default 1 day = 25h.
       DEFAULT_TIMEOUT_S="$(awk "BEGIN { printf \"%d\", ${SCHEDULE_DAYS} * 24 * 3600 + 3600 }")"
       TIMEOUT="${K6_TIMEOUT:-${DEFAULT_TIMEOUT_S}s}"
       ;;

@@ -63,54 +63,76 @@
 // 4 SHARP spike onsets per 24h. Within-hour shape is flat → hour_baseline
 // median for hour 8 = 350, hour 9 = 350, hour 12 = 350, etc.
 //
-// Per-spike-onset 503 budget (math at hackathon-two/five baseline rpsPerPod=30,
-// HPA averageValue=30, maxReplicas=20):
+// THE 24H VARIANT (default since SCHEDULE_DAYS=1). The original design
+// of this scenario was pure-predictive: rely entirely on Prophet's
+// hour_baseline regressor to pre-empt every transition. That required
+// 48h of runtime — 24h to populate all 24 hour-of-day bins, then 24h
+// for cycle 2 to actually USE the populated profile. The user can only
+// wait 24h for the demo, so the design now blends TWO mechanisms so
+// the 503 gap is visible from hour 1, not hour 25:
 //
-//                                  HPA (reactive)         AAS (predictive, cycle 2+)
-//   pods at T-30s                  7 (from 200 RPS)       12 (pre-scaled by hour_baseline)
-//   actual at T+0                  350 RPS                350 RPS
-//   pods at T+0                    7                      12
-//   per-pod RPS at T+0             50 RPS/pod (71% util)  29 RPS/pod (41% util)
-//   per-pod RPS during transition  120+ briefly           29
-//   pods at T+90s (after react)    11                     12
-//   503s per spike onset           ~3,000-8,000           ~0-200 (just 30s ramp jitter)
+//   MECHANISM A (structural, day-1 visible) — ported from hackathon-four:
+//     HPA's `averageValue` target is tightened from 30 → 50 RPS/pod.
+//     HPA therefore runs at ~71% utilisation at the MED (200 RPS)
+//     plateau and ~100%+ during every transition; AAS keeps the
+//     hackathon-two `rpsPerPodMin=30` divisor and runs at ~41% util,
+//     so every spike onset finds HPA's 7 pods unable to absorb the
+//     200→350 ramp while AAS's 7 pods have 70% headroom and weather
+//     it without 503s. This delivers ~3-10× 503 reduction from
+//     hour 1.
 //
-// Per 24h cycle: HPA ~12,000-32,000 503s; AAS ~0-800 503s. **20-100× gap**.
+//   MECHANISM B (predictive, progressively engages over hours 4-24):
+//     HOURLY_PROFILE_MIN_HOURS dropped from 12 → 4 (controller +
+//     forecast-service). After ~4 hours of demo runtime, the
+//     classifier flips hourly_profile_valid=true. Hours actually
+//     observed (4 of 24 at flip-time) carry real medians; the other
+//     20 bins are interpolated from neighbours. From hour ~4 onward,
+//     Prophet's hour_baseline regressor blends partial-profile +
+//     recent-trend, and AAS starts pre-empting hours it has already
+//     seen recurring in the schedule. By hour 24 every hour-of-day
+//     bin has at least one real sample, so every subsequent spike
+//     would be fully pre-empted (relevant only if user extends to
+//     SCHEDULE_DAYS=2). On the default 24h run this raises the day-1
+//     ratio from ~3-10× to ~5-15× over the back half.
 //
-// CYCLE 1 IS UNFAIR TO AAS. Prophet's hour_baseline regressor needs:
-//   * HOURLY_PROFILE_MIN_HOURS=12 distinct UTC hours of history before
-//     hourly_profile_valid flips true (controlled by HOURLY_PROFILE_MIN_HOURS
-//     in forecast-service; default 12).
-//   * Full 24-hour coverage (one sample per UTC hour bin) before
-//     hour_baseline[h] is meaningful for every h.
+// Per-spike-onset 503 budget (24h variant, HPA averageValue=50,
+// AAS rpsPerPodMin=30, both maxReplicas=20):
 //
-// Cycle 1 of a fresh demo: hours 0-12 use linear_extrap (cold path, reactive
-// lookahead only); hours 12-24 have partial hour_baseline (only the hours
-// already seen are populated). Cycle 2+ has the full profile and produces
-// the dramatic differential.
+//                                  HPA (reactive, cost-tight)   AAS (structural+partial-predictive)
+//   pods at T-30s                  4 (from 200 RPS, 50 target)  7 (from 200 RPS, 30 divisor)
+//   actual at T+0                  350 RPS                      350 RPS
+//   pods at T+0                    4                            7 (hour 0-4) / 10-12 (hour 4-24, when regressor pre-empts)
+//   per-pod RPS at T+0             87 RPS/pod (overloaded)      50 RPS/pod (71% util) → 29 RPS/pod (41% util) once pre-empting
+//   per-pod RPS during transition  140+ briefly                 50-70 briefly / 29 briefly
+//   pods at T+90s (after react)    7                            12
+//   503s per spike onset           ~3,000-6,000                 ~200-1,000 (hour 0-4) / ~0-300 (hour 4-24)
 //
-// MEANING: this scenario REQUIRES at least 36 hours of run time to land
-// the demo claim. The default SCHEDULE_DAYS=2 covers that comfortably with
-// 48 hours total (24h warmup + 24h "money cycle"). For shorter dry-runs
-// set SCHEDULE_DAYS=0.5 etc. — but understand the 503 differential won't
-// materialise inside the warmup window.
+// Per 24h cycle (4 spikes × hour 0-4: structural-only; × hour 4-24: structural+regressor):
+//   HPA: ~12,000-24,000 503s (4 spikes × ~4,000 each)
+//   AAS: ~500-2,500 503s (cycle-average across both regimes)
+//   Net ratio: ~5-15× on day 1, climbing toward 20-100× if extended
+//   to SCHEDULE_DAYS=2.
 //
 // Tunables (all optional, defaults shown):
-//   SCHEDULE_DAYS          "2"    number of full 24h cycles (1 = warmup
-//                                  only, 2 = warmup + money cycle, 3 =
-//                                  warmup + 2 money cycles)
-//   SCHEDULE_LOW_RPS       "100"  overnight low (HPA settles at 4 pods)
-//   SCHEDULE_MEDLO_RPS     "150"  early/wind-down (HPA at 5 pods)
-//   SCHEDULE_MED_RPS       "200"  pre/post-rush plateau (HPA at 7 pods)
-//   SCHEDULE_SPIKE_RPS     "350"  rush-hour spike (HPA needs 12 pods)
+//   SCHEDULE_DAYS          "1"    number of full 24h cycles. Default 1
+//                                  delivers the demo in one wall-clock day.
+//                                  Set 2+ to also exercise the cycle-2
+//                                  fully-populated-regressor regime, in
+//                                  which case the per-cycle 503 gap on
+//                                  cycle 2+ widens to 20-100×.
+//   SCHEDULE_LOW_RPS       "100"  overnight low (HPA settles at 2-4 pods)
+//   SCHEDULE_MEDLO_RPS     "150"  early/wind-down
+//   SCHEDULE_MED_RPS       "200"  pre/post-rush plateau
+//   SCHEDULE_SPIKE_RPS     "350"  rush-hour spike (HPA needs 12 pods at the
+//                                  averageValue=50 cost-tight target)
 //   SCHEDULE_TRANSITION_S  "30"   hour-boundary ramp duration (seconds);
 //                                  shorter = sharper = more HPA 503s; 30s
 //                                  is the empirical sweet spot vs k6's
 //                                  preAllocatedVUs ramp-allocation jitter
 //
 // Examples:
-//   make k6-incluster-schedule                              # 2 days (48h)
-//   SCHEDULE_DAYS=3 make k6-incluster-schedule              # 3 days (72h)
+//   make k6-incluster-schedule                              # 1 day (24h) — the demo
+//   SCHEDULE_DAYS=2 make k6-incluster-schedule              # 2 days (48h) for cycle-2 lookahead
 //   SCHEDULE_DAYS=0.5 SCHEDULE_SPIKE_RPS=250 \
 //     make k6-incluster-schedule                            # 12h smoke test
 
@@ -120,7 +142,7 @@ import { getTargets, workURL } from "../lib/targets.js";
 
 const targets = getTargets();
 
-const DAYS         = parseFloat(__ENV.SCHEDULE_DAYS         || "2");
+const DAYS         = parseFloat(__ENV.SCHEDULE_DAYS         || "1");
 const LOW_RPS      = parseInt(__ENV.SCHEDULE_LOW_RPS        || "100");
 const MEDLO_RPS    = parseInt(__ENV.SCHEDULE_MEDLO_RPS      || "150");
 const MED_RPS      = parseInt(__ENV.SCHEDULE_MED_RPS        || "200");

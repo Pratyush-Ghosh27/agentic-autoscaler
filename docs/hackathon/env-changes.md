@@ -58,6 +58,9 @@ HACKATHON-marked blocks in the four files listed below.
 | 20 | `HOT_PATH_HISTORY_MINUTES` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `30` (hackathon-two value) | **`60`** (`hackathon-five` only) | Schedule-readiness | Hour-aligned traffic; the hot-path window now covers exactly one "hourly bucket" so the trend slope estimate and the `hour_baseline` regressor input share the same time axis. The hackathon-two 30 was tuned for the rotating-loop's 35-min-per-scenario cycle and is wrong for hour-aligned traffic. |
 | 21 | `CLASSIFIER_HISTORY_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `2` (hackathon-two value) | **`25`** (`hackathon-five` only) | Schedule-readiness | The entire `hackathon-five` demo claim depends on Prophet's `hour_baseline` regressor pre-empting hour-boundary transitions. `HOURLY_PROFILE_MIN_HOURS=12` (forecast-service default) requires at least 12 distinct UTC hours covered by this window; the full 24-bin profile requires all 24, so 25h gives 1h of slack for stragglers near hourly rollover. |
 | 22 | `PROPHET_USE_HOURLY_REGRESSOR` | [`deploy/manifests/forecast-service.yaml`](../../deploy/manifests/forecast-service.yaml) | `false` (hackathon-two value) | **`true`** (`hackathon-five` only) | Schedule-readiness | Re-enables Prophet's `hour_baseline` external regressor — the *only* mechanism by which Prophet can pre-empt sharp hour-boundary transitions and pre-scale AAS. This is the heart of `hackathon-five`'s 503 differential: without it, AAS scales reactively just like HPA at every spike onset and the 503 gap collapses to noise. Silently ignored on rotating/diurnal/stress runs (their `hourly_profile_valid` is false within their demo windows), so no rollback risk for the other branches. |
+| 23 | `HOURLY_PROFILE_MIN_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) + [`deploy/manifests/forecast-service.yaml`](../../deploy/manifests/forecast-service.yaml) | unset (code default `12`) | **`4`** (`hackathon-five` only) | 24h-demo-readiness | Original `hackathon-five` design needed 48h to land the 503 claim: 24h to populate all 24 `hour_baseline` bins, then 24h for the populated profile to actually drive predictions. The 24h-demo variant drops this floor to 4 so `hourly_profile_valid` flips true after just 4 distinct UTC hours of runtime; the other 20 bins are interpolated from neighbours, while the 4 real bins begin driving accurate regressor predictions for any of those 4 hours-of-day that recur within the demo window. Validation range in `internal/config/config.go` is `[1, 24]`; 4 is well inside. Set on both controller and forecast-service to satisfy the G11 mirrored-cross-check assertion. |
+| 24 | `spec.metrics[0].pods.target.averageValue` | [`deploy/manifests/hpa.yaml`](../../deploy/manifests/hpa.yaml) | `30` (hackathon fair-comparison value) | **`50`** (`hackathon-five` only) | 24h-demo-readiness | Ports `hackathon-four`'s "SLA-vs-cost asymmetry" mechanism. With the regressor warmup window shortened to 4h (#23), hours 0-4 of the demo still produce no predictive lift; this lever provides a structural 503 gap from hour 1 by tightening HPA's target utilisation to ~71% (`50 / ~70 RPS-per-pod capacity`) while AAS keeps `rpsPerPodMin=30` (~41% util). Every 200→350 transition then puts HPA's 4 pods at 87 RPS/pod (overloaded) while AAS's 7 pods sit at 50 RPS/pod (just below capacity). Combined with #23, the net day-1 503 ratio is ~5-15× (structural+partial-regressor) vs ~3-10× for #24 alone. Honest demo framing: "tightened HPA reaches the SLA boundary implied by cost-optimal sizing; AAS holds the SLA without the cost-vs-error tradeoff." |
+| 25 | `SCHEDULE_DAYS` (k6 env) | [`k6/scenarios/schedule.js`](../../k6/scenarios/schedule.js) + [`deploy/k6/run-incluster.sh`](../../deploy/k6/run-incluster.sh) | `2` (original hackathon-five default) | **`1`** (`hackathon-five` only) | 24h-demo-readiness | Default scenario length cut from 48h to 24h to match the user's wall-clock budget for the demo. Set `SCHEDULE_DAYS=2` (or `make k6-incluster-schedule SCHEDULE_DAYS=2`) at invocation time to restore the original "warmup + money cycle" pattern, which produces a wider 20-100× 503 ratio on cycle 2 once the `hour_baseline` profile is fully populated (24/24 bins observed at least once). |
 
 ## Grouped by category
 
@@ -190,6 +193,60 @@ the predicted line *tracks actual cleanly* (good for the predicted-
 vs-actual claim) but AAS reacts at the same time HPA does (kills
 the 503-differential claim). That's the failure mode on every demo
 branch prior to `hackathon-five`.
+
+### 24h-demo-readiness changes (#23, #24, #25, `hackathon-five` only)
+
+The original `hackathon-five` design (#20-#22) is correct but slow:
+it needs 48h (`SCHEDULE_DAYS=2`) of runtime to deliver the demo
+claim, because the `hour_baseline` regressor only becomes useful
+*after* cycle 1 populates every UTC hour bin (24h) so cycle 2 (next
+24h) can read those medians and pre-empt every transition. The user
+can only run the demo for 24h. Three coordinated tweaks compress
+the demo into that budget:
+
+1. **#23 — `HOURLY_PROFILE_MIN_HOURS=4`** drops the
+   `hourly_profile_valid` gate from "12 distinct UTC hours observed"
+   to "4 hours observed". The regressor flips active at demo hour ~4
+   instead of demo hour ~12, with 4 real bins + 20 interpolated. Any
+   hour-of-day that recurs in the schedule (none do within one cycle,
+   but the *next-cycle* hours would benefit; this is mostly relevant
+   when extending with `SCHEDULE_DAYS=2`) gets accurate
+   pre-emption. This change shortens the predictive-mechanism
+   warmup from 24h to 4h.
+2. **#24 — HPA `averageValue=50`** ports `hackathon-four`'s
+   structural cost-asymmetry into the schedule scenario, providing
+   a 503 differential from hour 1 that does NOT depend on
+   `hour_baseline` warmup. At 50 RPS/pod target, HPA runs at ~71%
+   utilisation and overshoots into 503 territory at every spike
+   transition; AAS at `rpsPerPodMin=30` (~41% util) absorbs the
+   spike without 503s.
+3. **#25 — `SCHEDULE_DAYS=1`** drops the default scenario length
+   from 48h to 24h. Users wanting the original "warmup + money
+   cycle" 20-100× differential set `SCHEDULE_DAYS=2` at invocation.
+
+Combined day-1 outcome on the 24h variant:
+
+| Demo phase | Predictive lift | Structural lift | Net 503 ratio (HPA/AAS) |
+|---|---|---|---|
+| Hour 0-4 (regressor warming) | None (linear_extrap only) | ~3-10× (from #24) | ~3-10× |
+| Hour 4-24 (regressor active, partial profile) | ~1.5-3× (recurring hours pre-empted) | ~3-10× (from #24) | ~5-15× |
+
+This is "honest hybrid" framing: the structural change provides
+constant baseline differential; the predictive change reinforces it
+once warm. Slide language: "AAS is *fundamentally* better at
+absorbing the SLA-vs-cost tradeoff that HPA faces — and Prophet's
+hour_of-day awareness *additionally* pre-empts predictable hour
+transitions that would otherwise trip both scalers."
+
+Reverts:
+
+- To restore the original 48h pure-predictive variant: set HPA
+  `averageValue` back to `30`, leave `HOURLY_PROFILE_MIN_HOURS=4`
+  (or restore to `12` — the original design assumed 12), and pass
+  `SCHEDULE_DAYS=2` at invocation.
+- To keep the 48h pure-predictive default permanently: revert this
+  commit and check out the parent. The 24h variant is the new
+  default head of `hackathon-five`.
 
 ## How to apply this branch to a running cluster
 

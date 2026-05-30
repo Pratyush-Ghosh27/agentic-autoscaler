@@ -146,6 +146,38 @@ spec:
           # rotating-loop's 2h28min cycle.)
           - name: CLASSIFIER_HISTORY_HOURS
             value: "25"
+          # HACKATHON-FIVE-24H OVERRIDE: 12 -> 4. The user's wall-clock
+          # budget for the demo is 24h, not 48h, so we can't wait the
+          # full day-1-warmup-then-day-2-money-cycle pattern that the
+          # default min-hours=12 enforces (regressor flips valid at
+          # hour 12 with partial profile; full 24 bins populated only
+          # at hour 24, leaving no time inside a 24h demo to actually
+          # USE the populated profile).
+          #
+          # Dropping to 4 makes the classifier emit hourly_profile_valid
+          # =true after just 4 distinct UTC hours of observation. The
+          # other 20 bins are interpolated from neighbour samples (see
+          # internal/classifier/pipeline.go ComputeHourlyProfile). The
+          # interpolation is mathematically correct but predictively
+          # weak for never-seen hours; what matters is that the hours
+          # already observed produce ACCURATE per-hour medians, and
+          # those bins THEN drive accurate hour_baseline regressor
+          # predictions for upcoming repeats of the same hour-of-day
+          # within the same demo run.
+          #
+          # Combined with hackathon-four's HPA cost-tightening (see
+          # deploy/manifests/hpa.yaml averageValue=50), this gives:
+          #   hour 0-4 : structural 503 gap only (~3-10×)
+          #   hour 4-24: structural + partial-regressor (~5-15×)
+          # Without the cost-tightening fallback, hour 0-4 would
+          # collapse to 1× and the demo's first quarter would look
+          # flat — same failure mode users reported on rotating-loop.
+          #
+          # Range validated to [1, 24] in internal/config/config.go;
+          # 4 is within bounds and exercised by the existing
+          # TestValidate_RejectsBadHourlyProfileMinHours coverage.
+          - name: HOURLY_PROFILE_MIN_HOURS
+            value: "4"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

@@ -44,6 +44,7 @@ spec:
         metric:
           name: http_requests_per_second
         target:
+          type: AverageValue
           # HACKATHON-FIVE-24H OVERRIDE: 30 -> 50. Ported from
           # hackathon-four's "SLA-vs-cost asymmetry" mechanism so the
           # 503 differential is visible from hour 1 of the demo,

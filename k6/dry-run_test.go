@@ -76,6 +76,10 @@ func TestK6DryRun_Rotating(t *testing.T) {
 	runK6Scenario(t, "scenarios/rotating.js")
 }
 
+func TestK6DryRun_Schedule(t *testing.T) {
+	runK6Scenario(t, "scenarios/schedule.js")
+}
+
 func runK6Scenario(t *testing.T, script string) {
 	t.Helper()
 
@@ -126,6 +130,18 @@ func runK6Scenario(t *testing.T, script string) {
 		"ROTATING_SPIKE_RPS=3",
 		"ROTATING_BURSTY_FLOOR=1",
 		"ROTATING_BURSTY_CEILING=2",
+		// Schedule scenario: SCHEDULE_DAYS=0.001 collapses the 24-bin
+		// profile to a near-trivial duration (24 stages × 0.001 day
+		// × 3600s = 86.4s, well past the --iterations=5 cutoff which
+		// is the actual gate here). All amplitudes set to k6's
+		// arrival-rate minimum (1 RPS) so VU allocation never
+		// stalls during the script-parse smoke test.
+		"SCHEDULE_DAYS=0.001",
+		"SCHEDULE_LOW_RPS=1",
+		"SCHEDULE_MEDLO_RPS=1",
+		"SCHEDULE_MED_RPS=2",
+		"SCHEDULE_SPIKE_RPS=3",
+		"SCHEDULE_TRANSITION_S=1",
 	)
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()

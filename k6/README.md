@@ -1,6 +1,6 @@
 # k6 Load Scenarios
 
-Five load-generation scenarios that drive byte-identical request streams
+Seven load-generation scenarios that drive byte-identical request streams
 to both `app-agentic` (the controller's target) and `app-hpa` (the
 HPA-managed control). Use them to compare tail latency, 503 rate, and
 replica trajectory between the two autoscalers.
@@ -14,6 +14,8 @@ replica trajectory between the two autoscalers.
 | `scenarios/spiky.js` | base load + periodic peaks | 20m | base=50, peak=500, every 2m |
 | `scenarios/bursty.js` | random bursts | 15m | 50/burst, 5–30s pauses |
 | `scenarios/diurnal.js` | 24-stage day-shape with lunch/PM spikes | 24h (configurable) | base=20, peak=300, spike=500 |
+| `scenarios/rotating.js` | continuous loop of steady→ramp→spiky→bursty | up to 23h 20m (configurable) | 4 cycles, range [60, 220] RPS |
+| `scenarios/schedule.js` | 24h-repeating hourly schedule with sharp transitions | 48h (configurable) | low=100, medlo=150, med=200, spike=350 RPS; 30s transitions |
 
 Every scenario respects `TARGET_AGENTIC_URL` and `TARGET_HPA_URL` (via
 `lib/targets.js`); when unset, both default to `http://localhost:8080`
@@ -44,11 +46,13 @@ and `http://localhost:8081` respectively.
 ### In-cluster Job (canonical for autoscaler comparison)
 
 ```bash
-make k6-incluster-ramp     # runs as a Job in the demo namespace
+make k6-incluster-ramp      # runs as a Job in the demo namespace
 make k6-incluster-steady
 make k6-incluster-spiky
 make k6-incluster-bursty
-make k6-incluster-diurnal  # 24h diurnal cycle (set DIURNAL_TOTAL_HOURS=N to compress)
+make k6-incluster-diurnal   # 24h diurnal cycle (set DIURNAL_TOTAL_HOURS=N to compress)
+make k6-incluster-rotating  # up to 23h 20m round-robin (set ROTATING_CYCLES=N)
+make k6-incluster-schedule  # 48h hour-aligned schedule (set SCHEDULE_DAYS=N)
 ```
 
 Each target wraps `deploy/k6/run-incluster.sh <scenario>`, which:
@@ -151,6 +155,18 @@ go test -tags=integration -v ./k6/...
 | `DIURNAL_PEAK_RPS` | diurnal | `300` |
 | `DIURNAL_SPIKE_RPS` | diurnal | `500` |
 | `DIURNAL_TOTAL_HOURS` | diurnal | `24` (compresses/expands the 24-stage shape) |
+| `ROTATING_CYCLES` | rotating | `10` (each cycle ≈ 2h 20m) |
+| `ROTATING_STEADY_RPS` | rotating | `100` |
+| `ROTATING_RAMP_PEAK_RPS` | rotating | `200` |
+| `ROTATING_SPIKE_RPS` | rotating | `200` |
+| `ROTATING_BURSTY_FLOOR` | rotating | `60` |
+| `ROTATING_BURSTY_CEILING` | rotating | `140` |
+| `SCHEDULE_DAYS` | schedule | `2` (24h-warmup + 24h "money cycle"; cycle 1 has no hour_baseline lookahead) |
+| `SCHEDULE_LOW_RPS` | schedule | `100` (overnight/late-evening level) |
+| `SCHEDULE_MEDLO_RPS` | schedule | `150` (early-morning / wind-down level) |
+| `SCHEDULE_MED_RPS` | schedule | `200` (pre/post-rush plateau) |
+| `SCHEDULE_SPIKE_RPS` | schedule | `350` (4 hour-aligned rush spikes per cycle) |
+| `SCHEDULE_TRANSITION_S` | schedule | `30` (hour-boundary ramp seconds) |
 
 [^1]: The bursty scenario uses the `per-vu-iterations` executor whose
     progress bar is scaled to `iterations`, not elapsed time. At the

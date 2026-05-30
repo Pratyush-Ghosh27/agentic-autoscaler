@@ -55,6 +55,9 @@ HACKATHON-marked blocks in the four files listed below.
 | 17 | `CLASSIFIER_HISTORY_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `1` (earlier hackathon value) | **`25`** | Diurnal-readiness | **Was a hard bug at `1`:** at default resolution=5min the query returned max 12 samples while `CLASSIFIER_MIN_POINTS=22` required ≥22, so the classifier logged "insufficient data" forever and never produced output. `25` lets the diurnal scenario see a full 24h cycle + 1h slack. Classifier still first engages at ~110 min elapsed regardless of this value. |
 | 18 | `spec.maxReplicas` | [`deploy/manifests/agenticautoscaler-sample.yaml`](../../deploy/manifests/agenticautoscaler-sample.yaml) and [`deploy/manifests/hpa.yaml`](../../deploy/manifests/hpa.yaml) | `10` | **`20`** | Diurnal-readiness | Diurnal SPIKE=500 RPS ÷ `rpsPerPodMax=30` = 17 pods minimum. The 10-cap saturated BOTH scalers identically during the lunch and PM spikes, erasing AAS's predictive advantage exactly when the demo needs to show it. Bumped on both CRs in lock-step so the bound stays symmetric. |
 | 19 | `spec.preferredForecaster` | [`deploy/manifests/agenticautoscaler-sample.yaml`](../../deploy/manifests/agenticautoscaler-sample.yaml) | unset (= `auto`) | **`prophet`** | Diurnal-readiness | Diurnal has clear seasonality; after 12h elapsed Prophet's `hourly_profile` regressor engages and dominates linear_extrap on SMAPE. Pinning avoids the classifier flapping to linear during early hours when the partial window looks flat. |
+| 20 | `HOT_PATH_HISTORY_MINUTES` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `30` (hackathon-two value) | **`60`** (`hackathon-five` only) | Schedule-readiness | Hour-aligned traffic; the hot-path window now covers exactly one "hourly bucket" so the trend slope estimate and the `hour_baseline` regressor input share the same time axis. The hackathon-two 30 was tuned for the rotating-loop's 35-min-per-scenario cycle and is wrong for hour-aligned traffic. |
+| 21 | `CLASSIFIER_HISTORY_HOURS` | [`config/manager/manager.yaml`](../../config/manager/manager.yaml) | `2` (hackathon-two value) | **`25`** (`hackathon-five` only) | Schedule-readiness | The entire `hackathon-five` demo claim depends on Prophet's `hour_baseline` regressor pre-empting hour-boundary transitions. `HOURLY_PROFILE_MIN_HOURS=12` (forecast-service default) requires at least 12 distinct UTC hours covered by this window; the full 24-bin profile requires all 24, so 25h gives 1h of slack for stragglers near hourly rollover. |
+| 22 | `PROPHET_USE_HOURLY_REGRESSOR` | [`deploy/manifests/forecast-service.yaml`](../../deploy/manifests/forecast-service.yaml) | `false` (hackathon-two value) | **`true`** (`hackathon-five` only) | Schedule-readiness | Re-enables Prophet's `hour_baseline` external regressor — the *only* mechanism by which Prophet can pre-empt sharp hour-boundary transitions and pre-scale AAS. This is the heart of `hackathon-five`'s 503 differential: without it, AAS scales reactively just like HPA at every spike onset and the 503 gap collapses to noise. Silently ignored on rotating/diurnal/stress runs (their `hourly_profile_valid` is false within their demo windows), so no rollback risk for the other branches. |
 
 ## Grouped by category
 
@@ -141,6 +144,52 @@ Note that with `CLASSIFIER_HISTORY_HOURS=25` the cluster effectively needs
 ~24h of uptime before the classifier sees enough history to identify
 "diurnal" specifically — earlier classifications may stamp other
 patterns. This is correct behaviour, not a bug.
+
+### Schedule-readiness changes (#20, #21, #22, `hackathon-five` only)
+
+These three changes turn the `schedule` scenario from "won't show a 503
+differential at all" into "produces a 20-100× 503 gap on cycle 2".
+
+`hackathon-two`'s rotating-loop config (HOT_PATH=30 min, CLASSIFIER=2h,
+PROPHET_USE_HOURLY_REGRESSOR=false) was tuned for a 2h28min sub-hour
+cycle period and is fundamentally incompatible with hour-aligned
+traffic. With those values on a `schedule` run, Prophet has no signal
+that hour 8 is about to transition to hour 9 — it just sees the recent
+trend (flat at 200), predicts ~200, and AAS scales reactively just
+like HPA. 503 differential collapses to noise (which is exactly the
+user-observed problem on hackathon-three/hackathon-two stress runs).
+
+After these overrides:
+
+1. `CLASSIFIER_HISTORY_HOURS=25` lets the cold-path classifier query
+   a full 24h of Prometheus data → all 24 `hourly_profile` bins are
+   populated → `hourly_profile_valid` flips true at ~hour 12 of the
+   first cycle.
+2. `PROPHET_USE_HOURLY_REGRESSOR=true` then lets Prophet consume that
+   profile via `add_regressor("hour_baseline")`. The regressor's
+   input at inference time `t` is `hourly_profile[hour_of(t)]`, so
+   when AAS asks "what will RPS be at minute t+5?", Prophet reads
+   the median RPS of `hour_of(t+5)` from yesterday and predicts that.
+3. `HOT_PATH_HISTORY_MINUTES=60` aligns the hot-path window with one
+   full hourly bucket so the trend-slope contribution Prophet
+   computes from the recent past is on the same time-of-day axis
+   as the regressor.
+
+The combined effect on cycle 2 of a `schedule` run: at 07:55:00,
+predicting 08:00:00 (5 min ahead, in hour 8). Regressor reads
+`hourly_profile[8] = 350` (from cycle 1 hour 8). Prophet's yhat
+blends recent trend (200) with regressor influence (350), outputting
+something close to 280-330 — high enough that AAS provisions 10-11
+pods by 07:58 instead of HPA's 7. When the 200→350 ramp fires at
+08:00:00, AAS already has the capacity; HPA spends ~90s scaling
+4→7→11 pods, during which per-pod RPS hits 50+ and 503s accumulate.
+
+Without #22, all of this falls apart — Prophet's only input is the
+recent trend, which is flat at 200 going into every transition, so
+the predicted line *tracks actual cleanly* (good for the predicted-
+vs-actual claim) but AAS reacts at the same time HPA does (kills
+the 503-differential claim). That's the failure mode on every demo
+branch prior to `hackathon-five`.
 
 ## How to apply this branch to a running cluster
 

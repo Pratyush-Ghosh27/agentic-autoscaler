@@ -168,6 +168,18 @@ spec:
               value: "${ROTATING_BURSTY_FLOOR}"
             - name: ROTATING_BURSTY_CEILING
               value: "${ROTATING_BURSTY_CEILING}"
+            - name: SCHEDULE_DAYS
+              value: "${SCHEDULE_DAYS}"
+            - name: SCHEDULE_LOW_RPS
+              value: "${SCHEDULE_LOW_RPS}"
+            - name: SCHEDULE_MEDLO_RPS
+              value: "${SCHEDULE_MEDLO_RPS}"
+            - name: SCHEDULE_MED_RPS
+              value: "${SCHEDULE_MED_RPS}"
+            - name: SCHEDULE_SPIKE_RPS
+              value: "${SCHEDULE_SPIKE_RPS}"
+            - name: SCHEDULE_TRANSITION_S
+              value: "${SCHEDULE_TRANSITION_S}"
           resources:
             # Guaranteed QoS class: requests == limits on every
             # resource. Kubelet evicts BestEffort first, then
@@ -221,3 +233,5 @@ spec:
                 path: scenarios/diurnal.js
               - key: rotating.js
                 path: scenarios/rotating.js
+              - key: schedule.js
+                path: scenarios/schedule.js

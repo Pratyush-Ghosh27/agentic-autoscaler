@@ -50,18 +50,24 @@ spec:
             # spec.preferredForecaster: gbdt_quantile.
             - name: GBDT_MIN_POINTS
               value: "10"
-            # HACKATHON-TWO ADDITION: disable Prophet's hour_baseline
-            # regressor. The rotating-loop demo cycles every 2h28min;
-            # the hour-of-day average therefore mixes steady, ramp,
-            # spiky, and bursty traffic from different cycles. That
-            # average looks ~steady regardless of the current phase
-            # and pulls Prophet's prediction toward a flat midline
-            # exactly when the actual is mid-ramp or mid-spike.
-            # Disabling lets Prophet rely on its trend + changepoint
-            # detection from the last HOT_PATH_HISTORY_MINUTES=30 of
-            # data, which is what we want for this demo.
+            # HACKATHON-FIVE OVERRIDE: re-enabled (hackathon-two had
+            # disabled this because the rotating-loop's 2h28min cycle
+            # period made the per-hour median meaningless). The
+            # schedule scenario REQUIRES this regressor — it's the
+            # ONLY mechanism by which Prophet can anticipate the
+            # sharp hour-boundary transitions and pre-scale AAS
+            # before HPA gets caught. See
+            # docs/hackathon/schedule-503-demo.md and the design
+            # comment block in k6/scenarios/schedule.js for the full
+            # mechanism walkthrough.
+            # NOTE: hour_baseline is silently ignored when the
+            # context's hourly_profile_valid==false, which is the
+            # case for rotating/diurnal/stress runs that don't
+            # complete a full 24h before forecaster invocation.
+            # Re-enabling here is therefore a no-op for those
+            # scenarios; only the new `schedule` scenario benefits.
             - name: PROPHET_USE_HOURLY_REGRESSOR
-              value: "false"
+              value: "true"
           resources:
             requests:
               cpu: 200m
